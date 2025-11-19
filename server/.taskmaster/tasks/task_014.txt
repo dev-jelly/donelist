@@ -1,0 +1,61 @@
+# Task ID: 14
+# Title: Create Comprehensive Test Suite
+# Status: in-progress
+# Dependencies: None
+# Priority: high
+# Description: Build full test coverage including unit, integration, and end-to-end tests
+# Details:
+Expand existing test files to achieve 80%+ coverage, implement table-driven tests for complex functions, add integration tests using testcontainers (already imported), create end-to-end API tests, implement load testing with k6 scripts, add mutation testing for critical paths, set up continuous testing in CI pipeline. Mock external dependencies using gomock.
+
+# Test Strategy:
+Measure code coverage with go test -cover, verify all critical paths tested, run mutation testing, execute load tests, verify CI pipeline integration
+
+# Subtasks:
+## 1. Set up test infrastructure and coverage tooling [pending]
+### Dependencies: None
+### Description: Configure test environment with coverage reporting, test databases, and mock generation tools
+### Details:
+Install and configure go test coverage tools, set up testcontainers for PostgreSQL and Redis, configure gomock for dependency mocking, create test configuration files with environment variables, set up test data fixtures and factories, configure parallel test execution settings
+
+## 2. Expand unit tests for core business logic [pending]
+### Dependencies: 14.1
+### Description: Write comprehensive unit tests for all service layer functions and business logic components
+### Details:
+Create table-driven tests for user service, checkin service, and analytics service, mock database interactions using gomock, test error handling paths and edge cases, ensure all validation logic is tested, cover utility functions and helpers, aim for 80% coverage in services package
+
+## 3. Implement integration tests with testcontainers [pending]
+### Dependencies: 14.1
+### Description: Create integration tests using testcontainers for database operations and external service interactions
+### Details:
+Set up PostgreSQL testcontainer for database integration tests, configure Redis testcontainer for cache testing, test complete request flows from HTTP to database, verify transaction rollback scenarios, test database migrations and schema changes, implement cleanup between test runs
+
+## 4. Build end-to-end API test suite [pending]
+### Dependencies: 14.2, 14.3
+### Description: Develop comprehensive E2E tests covering all API endpoints and user workflows
+### Details:
+Create test client with authentication helpers, test complete user journeys (signup, login, checkin creation, export), verify API response schemas and status codes, test pagination and filtering endpoints, validate WebSocket connections and real-time features, test rate limiting and security features
+
+## 5. Implement load testing with k6 scripts [pending]
+### Dependencies: 14.4
+### Description: Create performance and load testing scripts using k6 to verify system scalability
+### Details:
+Write k6 scripts for critical user paths (authentication, checkin creation, data export), configure virtual user scenarios with realistic traffic patterns, test WebSocket connection limits and message throughput, measure API response times under load, identify performance bottlenecks and memory leaks, create performance regression tests
+
+## 6. Add mutation testing for critical paths [pending]
+### Dependencies: 14.2
+### Description: Implement mutation testing to verify test quality and identify gaps in test coverage
+### Details:
+Install and configure go-mutesting or similar mutation testing tool, identify critical business logic paths for mutation testing, run mutation tests on authentication, payment processing, and data validation code, analyze mutation survival rates and improve test assertions, document mutation testing results and coverage improvements, create mutation testing guidelines for team
+
+## 7. Set up test coverage reporting and monitoring [pending]
+### Dependencies: 14.2, 14.3, 14.4
+### Description: Configure comprehensive test coverage reporting with historical tracking and visualization
+### Details:
+Configure go test -coverprofile for HTML coverage reports, integrate coverage reporting with CI pipeline, set up coverage badges for README, configure coverage thresholds and fail builds below 80%, create coverage trend reports over time, integrate with code quality tools like SonarQube if available
+
+## 8. Integrate test suite with CI/CD pipeline [pending]
+### Dependencies: 14.7
+### Description: Configure continuous testing in CI pipeline with proper test staging and reporting
+### Details:
+Configure GitHub Actions or GitLab CI for test execution, set up test stages (unit -> integration -> E2E -> load), configure parallel test execution for speed, implement test result reporting and failure notifications, cache dependencies and test containers for faster builds, set up nightly full test runs including mutation and load tests
+

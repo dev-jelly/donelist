@@ -1,0 +1,43 @@
+# Task ID: 18
+# Title: Implement Caching Strategy
+# Status: pending
+# Dependencies: 12
+# Priority: medium
+# Description: Design and implement multi-level caching for optimal performance
+# Details:
+Implement Redis caching layers: Session cache (already started), Query result cache with TTL, User preference cache, Category/tag cache with invalidation on update. Add HTTP caching headers (ETag, Cache-Control) for GET endpoints, implement CDN-friendly cache keys, add cache warming for frequently accessed data, implement cache stampede protection using locks.
+
+# Test Strategy:
+Test cache hit/miss rates, verify invalidation logic, test cache stampede scenarios, measure performance improvement, test TTL expiration
+
+# Subtasks:
+## 1. Design Cache Architecture and Key Strategy [pending]
+### Dependencies: None
+### Description: Define comprehensive caching architecture including key naming conventions, TTL policies, and invalidation strategies for all cache layers
+### Details:
+Create detailed cache design document defining: 1) Key naming patterns for each cache type (sessions, queries, preferences, categories), 2) TTL values based on data volatility (30s for hot queries, 5m for user preferences, 1h for categories), 3) Cache invalidation events and triggers, 4) Memory allocation strategy for Redis, 5) Document cache eviction policies (LRU for queries, absolute TTL for sessions)
+
+## 2. Implement Redis Query Result Caching [pending]
+### Dependencies: 18.1
+### Description: Build query result caching layer with Redis including serialization, TTL management, and automatic cache key generation from SQL queries
+### Details:
+Implement cache.go package with: 1) QueryCache struct with Redis client, 2) CacheQuery() method that generates deterministic keys from SQL+params, 3) JSON serialization for result sets, 4) Configurable TTL based on query type, 5) Cache miss handler that executes query and stores result, 6) Batch get/set operations for efficiency, 7) Connection pooling configuration
+
+## 3. Add HTTP Caching Headers and ETag Support [pending]
+### Dependencies: 18.1
+### Description: Implement HTTP caching middleware with ETag generation, Cache-Control headers, and conditional request handling for all GET endpoints
+### Details:
+Create http_cache.go middleware: 1) Generate ETags using content hash for GET responses, 2) Add Cache-Control headers based on endpoint type (public, private, no-cache), 3) Handle If-None-Match for 304 responses, 4) Implement Vary headers for content negotiation, 5) Add Last-Modified headers using database timestamps, 6) Configure max-age values per endpoint type, 7) Support cache revalidation
+
+## 4. Implement Cache Warming and Preloading [pending]
+### Dependencies: 18.2
+### Description: Build cache warming system to preload frequently accessed data during startup and maintain hot cache for critical paths
+### Details:
+Develop cache_warmer.go service: 1) Identify hot data patterns from analytics, 2) Create warming jobs for categories, popular tags, recent checkins, 3) Implement progressive warming to avoid startup delays, 4) Schedule periodic refresh of warm cache, 5) Add metrics for cache temperature monitoring, 6) Implement priority queue for warming order, 7) Handle warming failures gracefully
+
+## 5. Add Cache Stampede Protection with Distributed Locks [pending]
+### Dependencies: 18.2
+### Description: Implement distributed locking mechanism using Redis to prevent cache stampede during simultaneous cache misses for the same key
+### Details:
+Build stampede_protection.go: 1) Implement Redis-based distributed locks using SET NX with TTL, 2) Create lock-and-load pattern for cache misses, 3) Add exponential backoff for lock acquisition, 4) Implement lock timeout handling, 5) Add jitter to prevent synchronized stampedes, 6) Create metrics for stampede detection, 7) Implement fallback to stale cache on lock timeout, 8) Add circuit breaker for database protection
+

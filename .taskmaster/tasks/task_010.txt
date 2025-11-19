@@ -1,0 +1,11 @@
+# Task ID: 10
+# Title: 사용자 구독 및 결제 시스템
+# Status: pending
+# Dependencies: 4
+# Priority: medium
+# Description: Free/Premium tier 구분 및 Stripe 기반 결제 처리 시스템
+# Details:
+사용자 구독 상태 관리. Stripe webhook 처리. 구독 갱신 및 취소 로직. In-App Purchase 검증(iOS/Android). 구독 만료 알림. 프로레이션 및 환불 처리. 구독 혜택 기능 플래그 관리.
+
+# Test Strategy:
+Stripe 웹훅 처리 테스트. 구독 상태 변경 시나리오 테스트. In-App Purchase 영수증 검증 테스트. 결제 실패 처리 테스트. 구독 만료 알림 테스트.

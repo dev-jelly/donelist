@@ -1,0 +1,55 @@
+# Task ID: 7
+# Title: Build Integration Webhooks System
+# Status: pending
+# Dependencies: 1
+# Priority: medium
+# Description: Implement webhook management and delivery system for third-party integrations
+# Details:
+Create webhooks table with url, events[], secret, active fields. Implement webhook service with: Event dispatcher (async using goroutines), Retry logic with exponential backoff, HMAC signature verification for security, Dead letter queue for failed deliveries, Webhook management API (CRUD operations). Events: checkin.created, checkin.updated, user.upgraded. Use a job queue like github.com/hibiken/asynq.
+
+# Test Strategy:
+Test webhook delivery, verify retry logic, test signature verification, load test event dispatcher, test failure scenarios
+
+# Subtasks:
+## 1. Create webhook database schema and repository layer [pending]
+### Dependencies: None
+### Description: Design and implement the webhooks table with all necessary fields and create the repository layer for database operations
+### Details:
+Create webhooks table with columns: id (UUID), url (TEXT), events (JSONB array), secret (TEXT), active (BOOLEAN), created_at, updated_at, retry_count (INT), last_attempt_at (TIMESTAMP). Implement repository with methods: CreateWebhook, GetWebhook, UpdateWebhook, DeleteWebhook, ListWebhooks, GetActiveWebhooksByEvent. Add indexes on events and active fields for query performance.
+
+## 2. Implement webhook service with event dispatcher using goroutines [pending]
+### Dependencies: 7.1
+### Description: Create the core webhook service that handles event dispatching asynchronously using goroutines and channels
+### Details:
+Create WebhookService struct with methods: DispatchEvent(eventType, payload), processWebhook(webhook, event). Implement worker pool pattern with configurable number of goroutines (default 10). Use buffered channels for event queue (capacity 1000). Add context support for graceful shutdown. Implement event filtering to only dispatch to webhooks subscribed to specific events (checkin.created, checkin.updated, user.upgraded).
+
+## 3. Add HMAC signature generation and verification [pending]
+### Dependencies: 7.2
+### Description: Implement secure webhook payload signing using HMAC-SHA256 for request authentication
+### Details:
+Create signature package with GenerateSignature(secret, payload) and VerifySignature(secret, payload, signature) functions. Use HMAC-SHA256 algorithm. Add X-Webhook-Signature header to all webhook requests. Include timestamp in signature to prevent replay attacks. Store webhook secrets encrypted in database using AES-256. Add signature verification middleware for incoming webhook responses.
+
+## 4. Implement retry logic with exponential backoff [pending]
+### Dependencies: 7.2
+### Description: Add intelligent retry mechanism for failed webhook deliveries with exponential backoff strategy
+### Details:
+Implement retry strategy with exponential backoff: initial delay 1s, max delay 1 hour, max retries 10. Use formula: delay = min(initialDelay * 2^attemptNumber, maxDelay). Add jitter to prevent thundering herd. Store retry state in database (retry_count, last_attempt_at, next_retry_at). Implement circuit breaker pattern to temporarily disable webhooks after consecutive failures. Add HTTP timeout of 10 seconds for webhook requests.
+
+## 5. Setup Asynq job queue and dead letter queue [pending]
+### Dependencies: 7.4
+### Description: Integrate Asynq job queue for reliable webhook delivery and implement dead letter queue for failed deliveries
+### Details:
+Install and configure github.com/hibiken/asynq with Redis backend. Create WebhookTask type implementing asynq.Task interface. Configure queues: default (for normal delivery), retry (for retries), dead (for DLQ). Set retention policy for DLQ (30 days). Implement task handlers for webhook delivery. Add monitoring dashboard using Asynq's built-in UI. Configure max concurrent workers based on system capacity.
+
+## 6. Create webhook management REST API endpoints [pending]
+### Dependencies: 7.1, 7.3
+### Description: Implement complete CRUD API for webhook management with proper authentication and validation
+### Details:
+Create endpoints: POST /api/webhooks (create), GET /api/webhooks (list with pagination), GET /api/webhooks/{id} (get details), PUT /api/webhooks/{id} (update), DELETE /api/webhooks/{id} (soft delete), POST /api/webhooks/{id}/test (send test event). Add request validation using validator/v10. Implement rate limiting (100 webhooks per account). Add webhook URL validation (HTTPS only in production). Include webhook delivery logs in GET response.
+
+## 7. Add monitoring, alerting and webhook delivery logs [pending]
+### Dependencies: 7.5, 7.6
+### Description: Implement comprehensive monitoring for webhook system health and delivery tracking
+### Details:
+Create webhook_deliveries table to log all delivery attempts with status, response_code, response_body, duration. Add Prometheus metrics: webhook_deliveries_total, webhook_delivery_duration, webhook_failures_total, webhook_queue_size. Implement alerting for: high failure rate (>10%), queue backup (>1000 pending), slow deliveries (>5s average). Add admin dashboard showing delivery stats, failure reasons, queue status. Implement webhook event replay functionality for debugging.
+

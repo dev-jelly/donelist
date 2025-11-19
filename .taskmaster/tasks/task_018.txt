@@ -1,0 +1,86 @@
+# Task ID: 18
+# Title: 데이터베이스 최적화 및 확장성
+# Status: pending
+# Dependencies: None
+# Priority: medium
+# Description: PostgreSQL 쿼리 최적화, 인덱싱, 파티셔닝, 백업 시스템
+# Details:
+체크인 테이블 날짜별 파티셔닝. 복합 인덱스 최적화. 쿼리 실행 계획 분석 및 튜닝. Read Replica 구성. 자동 백업 시스템. 데이터 아카이빙 정책. 연결 풀링 최적화. 슬로우 쿼리 모니터링.
+
+# Test Strategy:
+쿼리 성능 벤치마크. 인덱스 효과 측정. 파티셔닝 성능 테스트. 백업 및 복구 테스트. 동시 연결 수 성능 테스트.
+
+# Subtasks:
+## 1. 성능 기준선 수립과 슬로우 쿼리 로깅 활성화 [done]
+### Dependencies: None
+### Description: pg_stat_statements, auto_explain, log_min_duration_statement를 설정하고 7일 기준선을 수집합니다.
+### Details:
+프로덕션 등가 설정으로 pg_stat_statements와 auto_explain을 활성화하고 로그 회전/보존 정책을 구성합니다. 7일간 TPS, p95 지연, 상위 쿼리를 수집해 현재 상태를 문서화합니다.
+
+## 2. 워크로드 분석 및 인덱스 후보 도출 리포트 작성 [done]
+### Dependencies: 18.1
+### Description: 상위 쿼리를 유형화하고 인덱스/쿼리 개선 후보를 우선순위로 정리합니다.
+### Details:
+pg_stat_statements, EXPLAIN 통계, pg_indexes, 사용/미사용 인덱스 점검을 결합해 조인 키·필터·정렬 컬럼을 식별합니다. hypopg로 가상 인덱스 비용을 비교해 우선순위를 산정합니다.
+<info added on 2025-11-13T13:46:56.363Z>
+실제 워크로드 분석기 구현 완료. internal/performance/workload_analyzer.go에서 pg_stat_statements 기반 쿼리 패턴 분석, 미사용 인덱스 탐지(50회 스캔 미만), 높은 sequential scan이 발생하는 테이블 식별, 우선순위 기반 인덱스 후보 생성 및 CREATE SQL 문 자동 생성 기능 구현.
+
+Checkins 테이블용 복합 인덱스 (user+time, category+time), FTS, 편집된 체크인용 부분 인덱스와 Analytics events용 user+type+time 복합 인덱스 및 대용량 테이블 파티셔닝 권장사항, Search history용 user+time 인덱스, Sync queue용 user+status+time 부분 인덱스 등 핵심 테이블별 스마트 인덱스 후보 생성.
+
+CLI 도구 cmd/workload-analyzer/main.go로 analyze(전체 워크로드 분석), unused-indexes(미사용 인덱스 목록), missing-indexes(높은 seq scan 테이블), index-candidates(우선순위 인덱스 권장) 명령어 제공.
+
+4단계 우선순위 프레임워크: Critical(사용자 타임라인, FTS, 동기화 큐-즉시 구현), High(카테고리 필터링, 분석-1주 내), Medium(검색 기록-향후 검토), Low(프리미엄 기능-선택사항). 
+
+docs/WORKLOAD_ANALYSIS_GUIDE.md에 워크로드 분석 실행 방법, 우선순위별 인덱스 권장사항, 쿼리 패턴 분석, before/after 벤치마크 포함 인덱스 테스팅 방법론, 모니터링 모범 사례, CI/CD 통합 예제, 일반적인 인덱스 문제 해결 방법 문서화.
+
+테스팅 접근법: 7일 기준선 수집 후 워크로드 분석기 실행, 각 인덱스 영향도를 EXPLAIN ANALYZE로 테스트, 실행 시간 전후 측정, 중요 쿼리에 대해 95% 이상 개선도 검증, pg_stat_user_indexes로 인덱스 사용량 모니터링 계획 수립.
+</info added on 2025-11-13T13:46:56.363Z>
+
+## 3. 복합 인덱스 설계·적용·롤백 전략 구현 [pending]
+### Dependencies: 18.2
+### Description: 우선순위 높은 쿼리를 커버하는 복합 인덱스를 무중단으로 적용합니다.
+### Details:
+WHERE/ORDER BY 순서를 반영해 컬럼 정렬을 최적화하고 CREATE INDEX CONCURRENTLY로 배포합니다. 중복 인덱스 통합·제거와 롤백 스크립트를 함께 준비합니다.
+
+## 4. 체크인 테이블 날짜 기준 파티셔닝 설계 및 온라인 마이그레이션 [pending]
+### Dependencies: 18.1, 18.2
+### Description: RANGE(월 단위) 파티셔닝을 설계하고 데이터 이동을 최소 다운타임으로 수행합니다.
+### Details:
+PARTITION BY RANGE(checkin_date) 구조를 정의하고, 트래픽을 유지한 채 백필 작업을 진행합니다. 기본 파티션, 보존 기간, 파티션 생성·삭제 자동화 스크립트를 포함합니다.
+
+## 5. 실행계획 기반 쿼리 튜닝 및 파라미터 최적화 [pending]
+### Dependencies: 18.3, 18.4
+### Description: EXPLAIN(ANALYZE, BUFFERS) 결과로 쿼리 구조와 DB 파라미터를 조정합니다.
+### Details:
+조인 순서/방식 개선, 인덱스 전용 스캔 유도, work_mem/parallel 설정 최적화를 적용합니다. 계획 캐시·바인드 변수 이슈를 점검하고 고비용 쿼리를 리라이트합니다.
+
+## 6. 연결 풀링(pgBouncer)·타임아웃 구성 및 부하 테스트 [pending]
+### Dependencies: 18.5
+### Description: pgBouncer 도입으로 연결 수를 안정화하고 적정 타임아웃을 설정합니다.
+### Details:
+pool_mode=transaction, max_client_conn, default_pool_size, server_lifetime, statement_timeout, idle_in_transaction_session_timeout 등을 조정합니다. 드라이버 호환성과 프리페어드 스테이트먼트 동작을 검토합니다.
+
+## 7. 자동 백업(PITR)·복구 절차 설계 및 리허설 [pending]
+### Dependencies: 18.1
+### Description: WAL 보관 기반 자동 백업과 포인트 인 타임 복구 절차를 구축합니다.
+### Details:
+pgBackRest 또는 WAL-G로 전체/증분 백업, 암호화, 보존·삭제 정책, S3 업로드를 자동화합니다. 정기 복구 리허설과 문서화된 복구 Runbook을 제공합니다.
+
+## 8. Read Replica 구축·지연 관리 및 읽기 트래픽 분산 [pending]
+### Dependencies: 18.7
+### Description: 스트리밍 복제를 구성하고 읽기 전용 트래픽을 안전하게 분산합니다.
+### Details:
+wal_level, max_wal_senders, replication slots, primary_conninfo를 설정하고 로드밸런서/라우팅 규칙으로 읽기 경로를 분리합니다. 지연 한도와 자동 승격 정책 초안을 수립합니다.
+
+## 9. 데이터 아카이빙 정책 정의 및 파티션 이동·압축 자동화 [pending]
+### Dependencies: 18.4, 18.7
+### Description: 보존 기간·접근 빈도에 따른 계층화 정책을 정의하고 오래된 파티션을 아카이브합니다.
+### Details:
+N개월 지난 파티션을 DETACH해 별도 스키마/저장소로 이동하고 ZSTD 등으로 압축합니다. 카탈로그 기록과 조회용 뷰를 제공하며 복원 경로와 SLA를 명시합니다.
+
+## 10. 모니터링·알람·대시보드 및 운영 Runbook 완성 [pending]
+### Dependencies: 18.6, 18.8, 18.9
+### Description: 성능·복제·백업 지표 대시보드와 경보 규칙을 배포하고 대응 절차를 문서화합니다.
+### Details:
+postgres_exporter/pgBadger로 지표·리포트를 수집하고 Grafana/Alertmanager로 p95 지연, 복제 지연, 백업 실패, 디스크 사용량, bloat 등에 알림을 설정합니다. 장애 시나리오별 Runbook을 작성합니다.
+

@@ -1,0 +1,418 @@
+package premium
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+// FeatureFlag represents a feature flag configuration
+type FeatureFlag struct {
+	Key         string                 `json:"key"`
+	Enabled     bool                   `json:"enabled"`
+	Description string                 `json:"description"`
+	Rules       []FeatureRule          `json:"rules"`
+	Metadata    map[string]interface{} `json:"metadata"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+}
+
+// FeatureRule represents a rule for feature flag evaluation
+type FeatureRule struct {
+	Type       RuleType               `json:"type"`
+	Condition  string                 `json:"condition"`
+	Value      interface{}            `json:"value"`
+	Percentage int                    `json:"percentage"` // For gradual rollout
+	Metadata   map[string]interface{} `json:"metadata"`
+}
+
+// RuleType represents the type of feature rule
+type RuleType string
+
+const (
+	RuleTier       RuleType = "tier"
+	RuleUser       RuleType = "user"
+	RuleGroup      RuleType = "group"
+	RulePercentage RuleType = "percentage"
+	RuleDate       RuleType = "date"
+	RuleCustom     RuleType = "custom"
+)
+
+// FeatureFlagService manages feature flags
+type FeatureFlagService struct {
+	redis      *redis.Client
+	cache      map[string]*FeatureFlag
+	cacheMutex sync.RWMutex
+	logger     *zap.Logger
+}
+
+// NewFeatureFlagService creates a new feature flag service
+func NewFeatureFlagService(redisClient *redis.Client, logger *zap.Logger) *FeatureFlagService {
+	return &FeatureFlagService{
+		redis:  redisClient,
+		cache:  make(map[string]*FeatureFlag),
+		logger: logger,
+	}
+}
+
+// featureFlagKey returns the Redis key for a feature flag
+func (s *FeatureFlagService) featureFlagKey(key string) string {
+	return fmt.Sprintf("feature:flag:%s", key)
+}
+
+// CreateFlag creates a new feature flag
+func (s *FeatureFlagService) CreateFlag(ctx context.Context, flag *FeatureFlag) error {
+	flag.CreatedAt = time.Now()
+	flag.UpdatedAt = time.Now()
+
+	data, err := json.Marshal(flag)
+	if err != nil {
+		return fmt.Errorf("failed to marshal feature flag: %w", err)
+	}
+
+	key := s.featureFlagKey(flag.Key)
+	err = s.redis.Set(ctx, key, data, 0).Err()
+	if err != nil {
+		return fmt.Errorf("failed to save feature flag: %w", err)
+	}
+
+	// Update cache
+	s.cacheMutex.Lock()
+	s.cache[flag.Key] = flag
+	s.cacheMutex.Unlock()
+
+	s.logger.Info("Created feature flag",
+		zap.String("key", flag.Key),
+		zap.Bool("enabled", flag.Enabled),
+	)
+
+	return nil
+}
+
+// GetFlag retrieves a feature flag
+func (s *FeatureFlagService) GetFlag(ctx context.Context, key string) (*FeatureFlag, error) {
+	// Check cache first
+	s.cacheMutex.RLock()
+	if flag, exists := s.cache[key]; exists {
+		s.cacheMutex.RUnlock()
+		return flag, nil
+	}
+	s.cacheMutex.RUnlock()
+
+	// Get from Redis
+	redisKey := s.featureFlagKey(key)
+	data, err := s.redis.Get(ctx, redisKey).Result()
+	if err == redis.Nil {
+		return nil, fmt.Errorf("feature flag not found: %s", key)
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get feature flag: %w", err)
+	}
+
+	var flag FeatureFlag
+	if err := json.Unmarshal([]byte(data), &flag); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal feature flag: %w", err)
+	}
+
+	// Update cache
+	s.cacheMutex.Lock()
+	s.cache[key] = &flag
+	s.cacheMutex.Unlock()
+
+	return &flag, nil
+}
+
+// UpdateFlag updates an existing feature flag
+func (s *FeatureFlagService) UpdateFlag(ctx context.Context, flag *FeatureFlag) error {
+	flag.UpdatedAt = time.Now()
+
+	data, err := json.Marshal(flag)
+	if err != nil {
+		return fmt.Errorf("failed to marshal feature flag: %w", err)
+	}
+
+	key := s.featureFlagKey(flag.Key)
+	err = s.redis.Set(ctx, key, data, 0).Err()
+	if err != nil {
+		return fmt.Errorf("failed to update feature flag: %w", err)
+	}
+
+	// Update cache
+	s.cacheMutex.Lock()
+	s.cache[flag.Key] = flag
+	s.cacheMutex.Unlock()
+
+	s.logger.Info("Updated feature flag",
+		zap.String("key", flag.Key),
+		zap.Bool("enabled", flag.Enabled),
+	)
+
+	return nil
+}
+
+// DeleteFlag deletes a feature flag
+func (s *FeatureFlagService) DeleteFlag(ctx context.Context, key string) error {
+	redisKey := s.featureFlagKey(key)
+	err := s.redis.Del(ctx, redisKey).Err()
+	if err != nil {
+		return fmt.Errorf("failed to delete feature flag: %w", err)
+	}
+
+	// Remove from cache
+	s.cacheMutex.Lock()
+	delete(s.cache, key)
+	s.cacheMutex.Unlock()
+
+	s.logger.Info("Deleted feature flag", zap.String("key", key))
+
+	return nil
+}
+
+// EvaluationContext contains context for feature flag evaluation
+type EvaluationContext struct {
+	UserID     string
+	UserTier   Tier
+	UserGroups []string
+	Attributes map[string]interface{}
+}
+
+// IsEnabled evaluates if a feature is enabled for a given context
+func (s *FeatureFlagService) IsEnabled(ctx context.Context, featureKey string, evalCtx *EvaluationContext) (bool, error) {
+	flag, err := s.GetFlag(ctx, featureKey)
+	if err != nil {
+		// If flag doesn't exist, check if it's a tier feature
+		return s.checkTierFeature(featureKey, evalCtx), nil
+	}
+
+	// If flag is globally disabled, return false
+	if !flag.Enabled {
+		return false, nil
+	}
+
+	// Evaluate rules
+	for _, rule := range flag.Rules {
+		if s.evaluateRule(rule, evalCtx) {
+			return true, nil
+		}
+	}
+
+	// If no rules match but flag is enabled, use default behavior
+	return flag.Enabled, nil
+}
+
+// evaluateRule evaluates a single feature rule
+func (s *FeatureFlagService) evaluateRule(rule FeatureRule, ctx *EvaluationContext) bool {
+	switch rule.Type {
+	case RuleTier:
+		if tierStr, ok := rule.Value.(string); ok {
+			requiredTier := Tier(tierStr)
+			return CompareTiers(ctx.UserTier, requiredTier) >= 0
+		}
+
+	case RuleUser:
+		if userID, ok := rule.Value.(string); ok {
+			return ctx.UserID == userID
+		}
+		if userIDs, ok := rule.Value.([]interface{}); ok {
+			for _, id := range userIDs {
+				if idStr, ok := id.(string); ok && ctx.UserID == idStr {
+					return true
+				}
+			}
+		}
+
+	case RuleGroup:
+		if group, ok := rule.Value.(string); ok {
+			for _, userGroup := range ctx.UserGroups {
+				if userGroup == group {
+					return true
+				}
+			}
+		}
+
+	case RulePercentage:
+		// Simple hash-based percentage rollout
+		if ctx.UserID != "" {
+			hash := 0
+			for _, char := range ctx.UserID {
+				hash = (hash*31 + int(char)) % 100
+			}
+			return hash < rule.Percentage
+		}
+
+	case RuleDate:
+		if dateStr, ok := rule.Value.(string); ok {
+			if targetDate, err := time.Parse(time.RFC3339, dateStr); err == nil {
+				if rule.Condition == "after" {
+					return time.Now().After(targetDate)
+				} else if rule.Condition == "before" {
+					return time.Now().Before(targetDate)
+				}
+			}
+		}
+
+	case RuleCustom:
+		// Custom rule evaluation based on attributes
+		if ctx.Attributes != nil {
+			if attrValue, exists := ctx.Attributes[rule.Condition]; exists {
+				return attrValue == rule.Value
+			}
+		}
+	}
+
+	return false
+}
+
+// checkTierFeature checks if a feature is available for a tier
+func (s *FeatureFlagService) checkTierFeature(featureKey string, ctx *EvaluationContext) bool {
+	// Convert feature key to Feature type
+	feature := Feature(featureKey)
+	return HasFeature(ctx.UserTier, feature)
+}
+
+// ListFlags lists all feature flags
+func (s *FeatureFlagService) ListFlags(ctx context.Context) ([]*FeatureFlag, error) {
+	pattern := s.featureFlagKey("*")
+	keys, err := s.redis.Keys(ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list feature flags: %w", err)
+	}
+
+	flags := make([]*FeatureFlag, 0, len(keys))
+	for _, key := range keys {
+		data, err := s.redis.Get(ctx, key).Result()
+		if err != nil {
+			s.logger.Warn("Failed to get feature flag",
+				zap.String("key", key),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		var flag FeatureFlag
+		if err := json.Unmarshal([]byte(data), &flag); err != nil {
+			s.logger.Warn("Failed to unmarshal feature flag",
+				zap.String("key", key),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		flags = append(flags, &flag)
+	}
+
+	return flags, nil
+}
+
+// RefreshCache refreshes the feature flag cache
+func (s *FeatureFlagService) RefreshCache(ctx context.Context) error {
+	flags, err := s.ListFlags(ctx)
+	if err != nil {
+		return err
+	}
+
+	s.cacheMutex.Lock()
+	defer s.cacheMutex.Unlock()
+
+	// Clear and rebuild cache
+	s.cache = make(map[string]*FeatureFlag)
+	for _, flag := range flags {
+		s.cache[flag.Key] = flag
+	}
+
+	s.logger.Info("Refreshed feature flag cache",
+		zap.Int("count", len(flags)),
+	)
+
+	return nil
+}
+
+// StartCacheRefresher starts a background goroutine to refresh cache periodically
+func (s *FeatureFlagService) StartCacheRefresher(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.RefreshCache(ctx); err != nil {
+				s.logger.Error("Failed to refresh feature flag cache",
+					zap.Error(err),
+				)
+			}
+		}
+	}
+}
+
+// CreateDefaultFlags creates default feature flags
+func (s *FeatureFlagService) CreateDefaultFlags(ctx context.Context) error {
+	defaultFlags := []FeatureFlag{
+		{
+			Key:         string(FeatureAdvancedAnalytics),
+			Enabled:     true,
+			Description: "Advanced analytics and reporting",
+			Rules: []FeatureRule{
+				{
+					Type:  RuleTier,
+					Value: string(TierPremium),
+				},
+			},
+		},
+		{
+			Key:         string(FeatureWebhooks),
+			Enabled:     true,
+			Description: "Webhook integrations",
+			Rules: []FeatureRule{
+				{
+					Type:  RuleTier,
+					Value: string(TierPremium),
+				},
+			},
+		},
+		{
+			Key:         string(FeatureSSO),
+			Enabled:     true,
+			Description: "Single Sign-On",
+			Rules: []FeatureRule{
+				{
+					Type:  RuleTier,
+					Value: string(TierEnterprise),
+				},
+			},
+		},
+		{
+			Key:         "beta_features",
+			Enabled:     true,
+			Description: "Access to beta features",
+			Rules: []FeatureRule{
+				{
+					Type:       RulePercentage,
+					Percentage: 10, // 10% of users
+				},
+			},
+		},
+		{
+			Key:         "maintenance_mode",
+			Enabled:     false,
+			Description: "System maintenance mode",
+			Rules:       []FeatureRule{},
+		},
+	}
+
+	for _, flag := range defaultFlags {
+		if err := s.CreateFlag(ctx, &flag); err != nil {
+			s.logger.Warn("Failed to create default flag",
+				zap.String("key", flag.Key),
+				zap.Error(err),
+			)
+		}
+	}
+
+	return nil
+}

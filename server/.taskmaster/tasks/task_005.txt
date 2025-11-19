@@ -1,0 +1,61 @@
+# Task ID: 5
+# Title: Implement Comprehensive Analytics System
+# Status: pending
+# Dependencies: 1
+# Priority: medium
+# Description: Build analytics collection, aggregation, and reporting system for user activity and productivity metrics
+# Details:
+Create analytics package with: Event collector service (track user actions, checkin patterns), Aggregation jobs using cron (daily, weekly, monthly summaries), Metrics calculator (streaks, productivity score, peak hours), Storage in PostgreSQL with time-series optimization, Redis caching for frequently accessed metrics. Implement endpoints: GET /analytics/summary, GET /analytics/trends, GET /analytics/categories. Use materialized views for performance.
+
+# Test Strategy:
+Test event collection accuracy, verify aggregation calculations, test cache invalidation, performance test with large datasets, verify timezone handling
+
+# Subtasks:
+## 1. Create analytics event collector service and data model [pending]
+### Dependencies: None
+### Description: Design and implement the core event collector service that tracks user actions and checkin patterns with proper data structures
+### Details:
+Create analytics/collector.go with EventCollector struct. Define event types (checkin_created, checkin_updated, user_login, etc.). Implement async event queue using channels. Create analytics_events table with columns: id, user_id, event_type, event_data (JSONB), created_at, session_id. Add indexes on user_id, event_type, and created_at for query performance.
+
+## 2. Implement analytics event storage with PostgreSQL integration [pending]
+### Dependencies: 5.1
+### Description: Build the persistence layer for analytics events with time-series optimization and efficient batch inserts
+### Details:
+Create analytics/storage.go with batch insert functionality. Implement partitioning strategy for analytics_events table by month. Add connection pooling for high-throughput writes. Create indexes optimized for time-series queries. Implement event deduplication using unique constraints. Add retry logic for failed inserts with exponential backoff.
+
+## 3. Build aggregation jobs with cron scheduling system [pending]
+### Dependencies: 5.2
+### Description: Create scheduled jobs for daily, weekly, and monthly analytics aggregation using cron patterns
+### Details:
+Implement analytics/aggregator.go using robfig/cron library. Create jobs for: hourly rollups (active users, checkin counts), daily summaries (unique users, total checkins by category), weekly trends (7-day moving averages), monthly reports (productivity scores, category distributions). Store results in analytics_aggregates table with period, metric_type, metric_value, calculated_at columns.
+
+## 4. Develop metrics calculator for streaks and productivity scores [pending]
+### Dependencies: 5.3
+### Description: Implement complex metric calculations including streak detection, productivity scoring, and peak hour analysis
+### Details:
+Create analytics/calculator.go with CalculateUserMetrics function. Implement streak algorithm checking consecutive days with checkins. Calculate productivity score based on: checkin frequency, category diversity, time consistency. Identify peak hours using histogram analysis. Store calculated metrics in user_metrics table with user_id, metric_name, metric_value, calculated_at. Add support for timezone-aware calculations.
+
+## 5. Create materialized views for query performance optimization [pending]
+### Dependencies: 5.4
+### Description: Design and implement PostgreSQL materialized views for frequently accessed analytics queries
+### Details:
+Create materialized views: mv_user_daily_summary (user stats per day), mv_category_trends (category usage over time), mv_global_metrics (platform-wide metrics). Implement refresh strategy using REFRESH MATERIALIZED VIEW CONCURRENTLY. Add indexes on materialized views for common query patterns. Create analytics/views.go to manage view refresh scheduling integrated with cron jobs.
+
+## 6. Implement Redis caching layer for analytics metrics [pending]
+### Dependencies: 5.5
+### Description: Add Redis caching for frequently accessed metrics with proper TTL and invalidation strategies
+### Details:
+Extend cache/redis.go with analytics-specific caching. Implement cache keys: analytics:user:{id}:summary (5min TTL), analytics:trends:{period} (1hour TTL), analytics:categories:{timeframe} (30min TTL). Add cache warming for popular queries. Implement cache-aside pattern with fallback to database. Add metrics for cache hit/miss rates. Use Redis pipeline for bulk operations.
+
+## 7. Build analytics REST API endpoints [pending]
+### Dependencies: 5.6
+### Description: Create comprehensive API endpoints for analytics data retrieval with proper pagination and filtering
+### Details:
+Implement handlers in handlers/analytics.go: GET /analytics/summary (user summary with date range), GET /analytics/trends (time-series data with granularity options), GET /analytics/categories (category breakdown with filters). Add query parameters for date ranges, granularity (hour/day/week/month), and pagination. Include response caching headers. Implement rate limiting for analytics endpoints.
+
+## 8. Add timezone handling and comprehensive testing [pending]
+### Dependencies: 5.7
+### Description: Implement proper timezone support throughout the analytics system and create comprehensive test suite
+### Details:
+Add timezone support using time.LoadLocation for user-specific analytics. Store all events in UTC, convert for display based on user preferences. Create analytics/timezone.go with conversion utilities. Write integration tests covering: event collection through to API responses, timezone conversion accuracy, aggregation job execution, cache behavior under load. Add performance benchmarks for 100K+ events.
+

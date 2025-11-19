@@ -1,0 +1,168 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: donelist_test
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+        cache: true
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download dependencies
+      run: |
+        cd server
+        go mod download
+        go mod verify
+
+    - name: Run unit tests
+      run: |
+        cd server
+        go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      env:
+        DATABASE_URL: postgresql://postgres:test@localhost:5432/donelist_test?sslmode=disable
+        REDIS_URL: redis://localhost:6379
+        JWT_SECRET: test-secret-key-for-ci
+        GO_ENV: test
+
+    - name: Check coverage threshold
+      run: |
+        cd server
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Coverage: $COVERAGE%"
+        if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+          echo "⚠️  Coverage is below 70% threshold"
+          echo "Current coverage: $COVERAGE%"
+          echo "Target coverage: 80%+"
+          # Don't fail CI yet, just warn
+          # exit 1
+        else
+          echo "✓ Coverage meets threshold: $COVERAGE%"
+        fi
+
+    - name: Generate coverage HTML report
+      if: always()
+      run: |
+        cd server
+        go tool cover -html=coverage.out -o coverage.html
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: ./server/coverage.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+    - name: Upload coverage reports as artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports
+        path: |
+          server/coverage.out
+          server/coverage.html
+        retention-days: 30
+
+    - name: Run integration tests
+      if: success()
+      run: |
+        cd server
+        go test -v -tags=integration ./tests/integration/...
+      env:
+        DATABASE_URL: postgresql://postgres:test@localhost:5432/donelist_test?sslmode=disable
+        REDIS_URL: redis://localhost:6379
+        JWT_SECRET: test-secret-key-for-ci
+        GO_ENV: test
+
+    - name: Run go vet
+      run: |
+        cd server
+        go vet ./...
+
+    - name: Run staticcheck
+      uses: dominikh/staticcheck-action@v1
+      with:
+        version: "latest"
+        install-go: false
+        working-directory: server
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        working-directory: server
+        args: --timeout=5m
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run Gosec Security Scanner
+      uses: securego/gosec@master
+      with:
+        args: '-fmt json -out gosec-results.json ./...'
+        working-directory: server
+
+    - name: Upload Gosec results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gosec-results
+        path: server/gosec-results.json

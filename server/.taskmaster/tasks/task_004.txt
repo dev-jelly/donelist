@@ -1,0 +1,49 @@
+# Task ID: 4
+# Title: Build Premium Features Gateway
+# Status: pending
+# Dependencies: 1
+# Priority: high
+# Description: Create middleware and service layer for premium feature access control and subscription management
+# Details:
+Implement subscription service checking user.tier and tier_expires_at, create PremiumOnly middleware for routes, add subscription management endpoints (upgrade, downgrade, cancel), implement grace period logic for expired subscriptions, create subscription_events table for audit trail. Feature flags: extended edit history (>2 hours), unlimited categories, advanced analytics access, API tokens, export functionality.
+
+# Test Strategy:
+Test tier transitions, verify feature access control, test expiration handling, verify grace period logic, integration tests for payment flows
+
+# Subtasks:
+## 1. Create subscription service with tier checking logic [pending]
+### Dependencies: None
+### Description: Implement core subscription service to check user tier status, expiration dates, and validate premium access rights
+### Details:
+Create subscription/service.go with methods: CheckUserTier(userID) to validate current tier and expiration, HasPremiumAccess(userID, feature) for feature-specific checks, GetSubscriptionStatus(userID) for detailed subscription info. Use user.tier and tier_expires_at fields from database. Implement caching layer using Redis for frequent tier checks.
+
+## 2. Implement PremiumOnly middleware for route protection [pending]
+### Dependencies: 4.1
+### Description: Build middleware to protect premium routes and enforce feature access based on user subscription tier
+### Details:
+Create middleware/premium.go with PremiumOnly() and RequireTier(minTier) middleware functions. Extract user from context, check subscription status via service, return 403 Forbidden if unauthorized. Add tier-specific error messages. Support feature-level checks using feature flags passed as middleware parameters.
+
+## 3. Add subscription management API endpoints [pending]
+### Dependencies: 4.1
+### Description: Create REST endpoints for users to upgrade, downgrade, and cancel their subscriptions with proper validation
+### Details:
+Implement in handlers/subscription.go: POST /subscription/upgrade for tier upgrades, POST /subscription/downgrade with confirmation, DELETE /subscription/cancel with grace period setup, GET /subscription/status for current status. Include request validation, business logic checks (prevent invalid transitions), and response formatting. Integrate with payment provider stubs.
+
+## 4. Implement grace period logic for expired subscriptions [pending]
+### Dependencies: 4.1
+### Description: Add grace period handling to allow temporary access after subscription expiration with proper notifications
+### Details:
+Extend subscription service with grace period configuration (7 days default). Add CheckGracePeriod(userID) method to determine if user is within grace period after expiration. Implement degraded access during grace period (read-only mode). Add scheduled job to check and notify users in grace period. Store grace period events for tracking.
+
+## 5. Create feature flags system for premium features [pending]
+### Dependencies: 4.1
+### Description: Build feature flag system to control access to specific premium features like extended history and unlimited categories
+### Details:
+Create features/flags.go with feature definitions: EXTENDED_HISTORY, UNLIMITED_CATEGORIES, ADVANCED_ANALYTICS, API_TOKENS, EXPORT_DATA. Implement IsFeatureEnabled(userID, feature) checking both tier and feature-specific rules. Add feature configuration file for easy management. Support A/B testing and gradual rollouts. Include feature usage tracking.
+
+## 6. Add subscription event auditing system [pending]
+### Dependencies: 4.3, 4.4
+### Description: Implement comprehensive audit trail for all subscription-related events and state changes
+### Details:
+Create subscription_events table via migration with fields: id, user_id, event_type, old_tier, new_tier, metadata, created_at. Implement EventLogger to record: tier changes, payment events, cancellations, grace period entries. Add event types enum: UPGRADED, DOWNGRADED, CANCELLED, EXPIRED, RENEWED. Include webhook triggers for important events. Create admin endpoint for event queries.
+

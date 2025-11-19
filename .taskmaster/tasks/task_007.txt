@@ -1,0 +1,54 @@
+# Task ID: 7
+# Title: 월간 캘린더 뷰 API 개발
+# Status: pending
+# Dependencies: 6
+# Priority: medium
+# Description: 한 달 전체의 일별 기록 완성도를 캘린더 형태로 제공하는 API
+# Details:
+월간 캘린더 데이터 구조 설계. 일별 기록 완성도를 색상 단계(0-100%)로 매핑. 달력 형태의 데이터 구조(7x6 그리드). 월별 요약 통계 포함. 다양한 달력 시작요일 지원(일요일/월요일).
+
+# Test Strategy:
+월별 데이터 정확도 테스트. 윤년 처리 테스트. 다양한 달력 시작요일 테스트. 색상 매핑 알고리즘 테스트. 월 경계 데이터 처리 테스트.
+
+# Subtasks:
+## 1. 월간 데이터 모델·스키마와 색상 매핑 규칙 설계 [in-progress]
+### Dependencies: None
+### Description: 7x6 그리드 기반 월간 캘린더 응답 구조와 0-100% 완성도 색상 매핑 규칙을 정의합니다.
+### Details:
+MonthCalendar 스키마(year, month, startOfWeek, grid[6][7], summary, legend)와 DayCell(date, inCurrentMonth, progress, color, isToday) 구조를 설계합니다. progress→bucket→color 함수와 구간 경계(예: 0,1–24,25–49,50–74,75–99,100) 및 팔레트를 명세하고 JSON Schema와 예제 페이로드를 작성합니다.
+
+## 2. 일별 완성도 집계 서비스 구현(주간 집계 재사용) [done]
+### Dependencies: 7.1
+### Description: 월 범위 일별 완성도를 계산하고 기존 주간 집계를 재사용하여 성능과 일관성을 확보합니다.
+### Details:
+getDailyCompletion(userId, monthStart, monthEnd)을 구현합니다. 기존 주간 집계 모듈을 호출해 주 단위 결과를 일 단위로 평탄화하고, 사용자 타임존 보정, 누락 일자 0% 채움, 범위 쿼리와 인덱스를 활용한 배치 조회를 적용합니다.
+<info added on 2025-11-12T16:43:01.023Z>
+프로젝트 구조를 먼저 분석하겠습니다.이제 캘린더 관련 파일들을 살펴보겠습니다.이제 체크인 관련 파일들도 확인해보겠습니다.실제 구현과 사용자의 요청을 기반으로 분석한 내용을 작성하겠습니다:
+
+calendar/repository.go에 GetDailyAggregates()는 SQL GROUP BY date를 사용한 효율적 집계, GetCategoryAggregates()는 카테고리별 분석, GetMonthlyTotal()은 캐싱용 월간 합계 메서드를 제공합니다. calendar/service.go의 GetMonthlyCalendar()는 메인 진입점으로 buildCalendarWeeks()는 7일 주 구조 생성, calculateMonthlySummary()는 총계/평균/연속기록 계산, calculateStreaks()는 현재/최장 연속기록 처리, buildCategoryBreakdown()은 카테고리 분포 생성을 담당합니다. time.LoadLocation()을 활용한 타임존 인식 날짜 그룹핑을 적용하고, 모든 체크인을 가져오지 않고 데이터베이스 레벨에서 효율적으로 집계합니다.
+</info added on 2025-11-12T16:43:01.023Z>
+
+## 3. 7x6 달력 그리드 생성 및 시작요일(Sun/Mon) 옵션 처리 [done]
+### Dependencies: 7.1, 7.2
+### Description: 달의 첫째 날 위치 계산으로 7x6 그리드를 구성하고 시작요일 옵션을 반영합니다.
+### Details:
+buildMonthGrid(year, month, startOfWeek, dailyMap)을 구현합니다. 첫날 요일과 startOfWeek 차이로 패딩 전·후일을 산출해 42셀을 채우고, inCurrentMonth 플래그, 오늘 표시, 주 인덱스를 계산합니다. 로케일 무관 동작을 위해 ISO 요일 계산 유틸을 사용합니다.
+
+## 4. 월경계·윤년 처리와 월별 요약 통계 계산 [done]
+### Dependencies: 7.2, 7.3
+### Description: 윤년과 월 경계 특수 케이스를 안전히 처리하고 월별 요약 통계를 산출합니다.
+### Details:
+isLeapYear·endOfMonth 유틸을 보강하고 computeMonthlySummary(dailyMap)로 평균·중앙값·최대/최소·완료일 수·구간별 분포·연속 스트릭을 계산합니다. 결측치는 0% 규칙을 적용하고 월 경계 밖 일자는 집계에서 제외합니다.
+
+## 5. 월간 캘린더 API 엔드포인트 구현 및 캐싱/버전 관리 [in-progress]
+### Dependencies: 7.1, 7.2, 7.3, 7.4
+### Description: GET 엔드포인트를 제공하고 ETag/TTL 캐시와 응답 버전 관리를 적용합니다.
+### Details:
+GET /api/v1/calendar/month?year=YYYY&month=MM&startOfWeek=sun|mon 을 구현합니다. 응답에 schemaVersion을 포함하고, 캐시 키를 userId:year-month:startOfWeek:version로 구성해 Redis/LRU와 TTL(예: 15분)을 적용합니다. 체크인 변이 시 무효화, If-None-Match/ETag 및 Cache-Control을 지원하고 400/401/500 오류 처리를 포함합니다.
+
+## 6. 스냅샷·계약 테스트와 OpenAPI 문서화 완료 [pending]
+### Dependencies: 7.5
+### Description: 대표 월 스냅샷과 계약 테스트로 응답 안정성을 보장하고 OpenAPI 문서를 확정합니다.
+### Details:
+2024-02(윤년), 2025-11, 2023-01/12 스냅샷 픽스처를 생성해 JSON Schema 기반 비교를 수행합니다. Pact 또는 OpenAPI 기반 컨슈머 계약 테스트를 추가하고, 문서에 매개변수·응답 예시·에러 코드·레이트리밋을 명시합니다. CI에 스냅샷/계약 테스트를 통합합니다.
+

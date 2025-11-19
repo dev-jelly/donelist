@@ -1,0 +1,90 @@
+# Task ID: 6
+# Title: 주간 통계 분석 API 구현
+# Status: pending
+# Dependencies: 5
+# Priority: high
+# Description: 7일간의 생산성 통계 및 패턴 분석을 제공하는 API - 완전 구현 완료
+# Details:
+주간 통계 분석 API가 성공적으로 구현되었습니다. `/api/v1/statistics/weekly` 엔드포인트를 통해 포괄적인 주간 통계를 제공합니다.
+
+**구현된 기능:**
+- 주간 요약 통계 (총 체크인, 총 시간, 일별 평균, 완성률)
+- 일별 세부 분석 (7일간 개별 통계)
+- 요일별 패턴 분석 (가장 생산적인 요일 식별)
+- 시간대별 분포 (아침/오후/저녁/밤 패턴)
+- 카테고리별 분석 (카테고리별 체크인 수 및 시간)
+- 주간 비교 분석 (전주 대비 변화율)
+- 연속 기록 추적 (현재 연속 기록, 최장 연속 기록, 마일스톤)
+
+**아키텍처 구성:**
+- `internal/statistics/models.go`: 통계 데이터 모델 정의
+- `internal/statistics/repository.go`: 데이터베이스 집계 쿼리 인터페이스
+- `internal/statistics/service.go`: 비즈니스 로직 및 통계 계산
+- `internal/api/handlers/statistics_handler.go`: HTTP API 핸들러
+- `internal/api/routes/routes.go`: 라우트 등록 (/api/v1/statistics/weekly)
+
+**지원 기능:**
+- 타임존 지원 (IANA 타임존)
+- 주 시작일 설정 가능 (일요일/월요일)
+- 날짜 파라미터를 통한 특정 주 조회
+- 캐시 만료 시간 설정
+- 인터페이스 기반 리포지토리 패턴
+
+# Test Strategy:
+7개의 단위 테스트가 성공적으로 통과했습니다:
+- 주간 경계 계산 테스트 (월요일/일요일 시작)
+- 타임존 처리 테스트
+- 시간대 분류 테스트 (아침/오후/저녁/밤)
+- 요일 이름 계산 테스트
+- ISO 주차 계산 테스트
+- 연속 기록 마일스톤 테스트
+- 전체 주간 통계 생성 테스트
+
+**통합 테스트 준비:**
+- API 엔드포인트 동작 테스트 필요
+- 다양한 파라미터 조합 테스트 필요
+- 성능 테스트 및 캐시 효율성 검증 필요
+
+# Subtasks:
+## 1. 통계 데이터 모델 및 구조 설계 [done]
+### Dependencies: None
+### Description: 주간 통계 분석을 위한 포괄적인 데이터 모델과 구조체 정의
+### Details:
+WeeklyStatistics, WeeklySummary, DailyBreakdown, TimeDistribution, CategoryStats, WeekComparison, StreakInfo 등 모든 필요한 데이터 구조를 정의했습니다. 타임존 지원, 주 시작일 설정, ISO 주차 계산 등의 유틸리티 함수도 포함되어 있습니다.
+
+## 2. 데이터베이스 집계 쿼리 리포지토리 구현 [done]
+### Dependencies: 6.1
+### Description: PostgreSQL 기반의 효율적인 집계 쿼리 및 리포지토리 인터페이스 구현
+### Details:
+RepositoryInterface를 정의하고 일별 집계, 카테고리별 집계, 시간대별 집계, 요일별 집계, 주간 총합, 연속 기록 데이터 조회를 위한 메서드들을 구현했습니다. 인터페이스 기반 설계로 테스트 가능성과 확장성을 확보했습니다.
+
+## 3. 통계 계산 서비스 로직 구현 [done]
+### Dependencies: 6.2
+### Description: 비즈니스 로직을 담당하는 통계 서비스 구현
+### Details:
+Service 구조체와 GetWeeklyStatistics 메서드를 구현했습니다. 주간 요약 계산, 일별 분석, 요일별 패턴, 시간대별 분포, 카테고리별 분석, 주간 비교, 연속 기록 계산 등 모든 통계 로직이 구현되어 있습니다. 타임존 처리와 오류 복구 로직도 포함되어 있습니다.
+
+## 4. HTTP API 핸들러 구현 [done]
+### Dependencies: 6.3
+### Description: RESTful API 엔드포인트 및 요청/응답 처리 핸들러 구현
+### Details:
+StatisticsHandler 구조체와 GetWeeklyStatistics HTTP 핸들러를 구현했습니다. 쿼리 파라미터 파싱 (date, week_start, timezone), 입력 유효성 검사, 인증 미들웨어 통합, 적절한 HTTP 상태 코드 반환 등이 구현되어 있습니다.
+
+## 5. 메인 애플리케이션과의 통합 [done]
+### Dependencies: 6.4
+### Description: 라우터 설정 및 의존성 주입을 통한 애플리케이션 통합
+### Details:
+routes.go에 `/api/v1/statistics/weekly` 엔드포인트가 등록되었습니다. 인증 미들웨어가 적용되어 보호된 라우트로 설정되었고, StatisticsHandler가 라우터 설정 함수에 통합되어 있습니다.
+
+## 6. 단위 테스트 구현 및 검증 [done]
+### Dependencies: 6.5
+### Description: 핵심 로직에 대한 포괄적인 단위 테스트 작성
+### Details:
+statistics/service_test.go에 7개의 단위 테스트가 구현되어 모두 통과했습니다. 주간 경계 계산, 타임존 처리, 시간대 분류, 요일 계산, ISO 주차, 연속 기록 마일스톤, 전체 통계 생성 등 핵심 기능들이 테스트되었습니다.
+
+## 7. 통합 테스트 및 성능 검증 [pending]
+### Dependencies: 6.6
+### Description: API 엔드포인트 통합 테스트 및 성능 최적화 검증
+### Details:
+실제 API 엔드포인트의 동작을 검증하고, 다양한 파라미터 조합, 에지 케이스, 성능 특성을 테스트해야 합니다. 캐시 효율성과 데이터베이스 쿼리 성능도 측정이 필요합니다.
+

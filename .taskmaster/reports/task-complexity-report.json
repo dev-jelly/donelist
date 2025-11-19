@@ -1,0 +1,173 @@
+{
+	"meta": {
+		"generatedAt": "2025-11-12T15:53:01.416Z",
+		"tasksAnalyzed": 20,
+		"totalTasks": 20,
+		"analysisCount": 20,
+		"thresholdScore": 5,
+		"projectName": "Donelist",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "체크인 시간 간격 로직 완성",
+			"complexityScore": 6,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "프로젝트의 시간 유틸과 체크인 서비스 코드를 기준으로 다음을 구현하세요: 1) 15/30/45/120분 규칙 엔진(+초 단위 정확도) 2) 마지막 체크인 기준 120분 경계 포함/초과 처리 3) 다음 가능 시각 계산 함수 `nextEligibleAt` 공개 API화 4) 타임존/DST 안전성(UTC 저장, 로컬 변환) 5) 단위테스트: 경계값, 연속 체크인/장기 미체크인, DST 전후, 클럭스큐 허용 범위.",
+			"reasoning": "코드베이스에 시간 처리 유틸이 이미 존재하고(예: `time_utils.go` 유사 모듈), 해당 로직 확장은 순수 함수 중심으로 영향 범위를 국소화할 수 있음. 주요 복잡도는 경계 처리와 테스트 케이스 다양성으로 중간 수준."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "백그라운드 푸시 알림 시스템 구현",
+			"complexityScore": 9,
+			"recommendedSubtasks": 10,
+			"expansionPrompt": "현 알림/큐/설정 코드를 확인한 뒤 다음을 단계적으로 구현: 1) 스케줄러(크론/워커)와 Redis 지연 큐 2) 마지막 체크인 조회 + 규칙 엔진 연동 3) FCM/APNs 어댑터 추상화(모킹 가능) 4) DnD/타임존 보정 5) 중복 방지/재시도/백오프 6) 멀티테넌트/샤딩 7) 관측성(메트릭/로그/트레이스) 8) 대량 배치 성능 튜닝 9) 통합 테스트(프로바이더 모킹) 10) 운영 플래그/드레인 모드.",
+			"reasoning": "외부 연동(Firebase/APNs), 분산 큐와 스케줄링, 대량 사용자 처리 및 시간대 고려 등으로 아키텍처 복잡도와 운영 난이도가 매우 높음."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "체크인 입력 검증 및 처리 강화",
+			"complexityScore": 7,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "입력 계층과 도메인 검증을 보강: 1) 길이/금지어/스팸 규칙 2) 카테고리 존재성 검증 3) 태그 정규화+자동완성 API(캐시/인덱스) 4) 동일 시간대 중복 방지(DB 제약/고유 인덱스) 5) STT 연동 인터페이스(플래그 비활성 기본) 6) 레이트리밋 연계 7) 단위/통합 테스트 8) 관측성(감사 로그/메트릭).",
+			"reasoning": "규칙 자체는 표준적이나 DB 고유 제약과 캐시/인덱스 설계가 필요하고 고부하 환경 고려로 복잡도가 상승."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "프리미엄 과거 수정 기능 구현",
+			"complexityScore": 6,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "권한과 변경 추적 중심으로 구현: 1) 구독 상태 미들웨어 2) 2시간 경계 권한 검증(무료/프리미엄 분기) 3) Audit Log 스키마/저장 4) 원본 보존+사유 입력 5) 동시 수정 잠금/버저닝 6) API/서비스 구현 7) 권한/이력 테스트.",
+			"reasoning": "도메인 규칙 명확, 외부 연동 적음. 동시성/이력 관리가 관건이지만 표준 패턴으로 해결 가능."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "일간 타임라인 뷰 API 개발",
+			"complexityScore": 7,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "타임라인 API 설계/구현: 1) 시간 블록화(15/30/45/120) 2) 빈 구간 채움 3) 카테고리 색상 메타 포함 4) 타임존 변환 5) 캐싱/페이지네이션 6) 쿼리 최적화/인덱스 7) 계약 테스트/예제 응답.",
+			"reasoning": "시간대/빈 구간 처리와 캐싱/쿼리 최적화가 필요. 규칙 엔진(태스크 1) 결과를 재사용해 난이도는 중상."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "주간 통계 분석 API 구현",
+			"complexityScore": 8,
+			"recommendedSubtasks": 9,
+			"expansionPrompt": "집계/캐시 중심: 1) 지표 정의 2) SQL 집계/뷰/머티리얼라이즈드 전략 3) Redis 캐시/무효화 4) 전주 대비 비교 5) 타임존/DST 보정 6) 성능 튜닝 7) API 구현 8) 데이터 검증 테스트 9) 관측/알림.",
+			"reasoning": "정확성과 성능을 동시에 만족해야 하고 캐시 무효화·시간대 보정이 까다로움."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "월간 캘린더 뷰 API 개발",
+			"complexityScore": 6,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "월 뷰 구성: 1) 7x6 그리드 2) 일별 완성도 집계(주간 재사용) 3) 시작요일 옵션 4) 월경계/윤년 처리 5) 캐시 6) 스냅샷/계약 테스트.",
+			"reasoning": "표현 규칙이 명확하고 주간 집계를 재사용 가능. 경계/윤년 처리가 주된 리스크."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "실시간 WebSocket 동기화 시스템 강화",
+			"complexityScore": 9,
+			"recommendedSubtasks": 11,
+			"expansionPrompt": "실시간 동기화: 1) 사용자별 룸/구독 2) 메시지 스키마(버전/증분 ID) 3) 순서 보장(시퀀스/파티션) 4) LWW 충돌 해결 5) Redis 오프라인 큐/재전송 6) 연결 모니터링/핸드셰이크 7) 재연결/백오프 8) 보안(JWT, 레이트리밋) 9) 메트릭/로그 10) 카나리 플래그 11) 부하 테스트 스크립트.",
+			"reasoning": "순서/일관성/오프라인 재전송/보안이 얽힌 분산 상태 관리 문제로 최고 난이도에 근접."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "오프라인 모드 지원 시스템",
+			"complexityScore": 8,
+			"recommendedSubtasks": 9,
+			"expansionPrompt": "오프라인/동기화: 1) 로컬 큐 스키마 2) 업/다운 동기화 프로토콜 3) 충돌 감지/해결(LWW+서버 검증) 4) 보존 기간/정책 5) 진행률/상태 API 6) 재시도/백오프 7) 실패 가시화 8) 단말/서버 통합 테스트 9) 암호화/보안.",
+			"reasoning": "클라이언트-서버 프로토콜과 충돌/재시도 정책 수립이 필요하고 WebSocket(태스크 8)에 의존."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "사용자 구독 및 결제 시스템",
+			"complexityScore": 8,
+			"recommendedSubtasks": 12,
+			"expansionPrompt": "구독/결제: 1) Stripe 제품/가격/구독 모델 2) 체크아웃/포털 3) 웹훅 서명 검증/이벤트 처리 4) 구독 상태 스테이트 머신 5) 프로레이션/환불/취소 6) IAP 검증 추상화 7) 기능 플래그/미들웨어 8) 만료 알림/그레이스 9) 데이터 모델/마이그 10) 감사 로그 11) 통합 테스트(Mock/Replay) 12) 운영 대시보드.",
+			"reasoning": "다중 결제 채널과 상태 전이, 보안 요구가 높아 복잡. 이후 프리미엄 기능들의 기반."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "고급 데이터 분석 엔진",
+			"complexityScore": 9,
+			"recommendedSubtasks": 12,
+			"expansionPrompt": "분석/추천 파이프라인: 1) 피처 스키마 2) 데이터 마트 3) 베이스라인(규칙/통계) 4) ML 실험/옵스 5) 서빙(동기/배치) 6) 프라이버시/가명화 7) 리포트 생성 8) AB 테스트 9) 품질/모니터링 10) 비용/성능 11) 외부 ML API 어댑터 12) 롤백 전략.",
+			"reasoning": "데이터 마트부터 서빙/프라이버시/실험까지 전 주기 요구로 고난도."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "데이터 내보내기 시스템",
+			"complexityScore": 8,
+			"recommendedSubtasks": 11,
+			"expansionPrompt": "내보내기: 1) 포맷 추상화(CSV/JSON/PDF) 2) 필터 파라미터 검증 3) 스트리밍/청크/압축 4) 작업 큐/상태 추적 5) 이메일/서명 URL 6) 가명화/마스킹 7) 성능 튜닝 8) 권한/구독 검사 9) 일시중지/재개 10) 메트릭/알림 11) 회귀/정합 테스트.",
+			"reasoning": "대용량 스트리밍과 보안/프라이버시 요구, 비동기 큐가 결합되어 난이도 높음."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "카테고리 및 태그 관리 시스템 확장",
+			"complexityScore": 7,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "카테고리/태그: 1) 사용자별 카테고리 CRUD 2) 색상 팔레트 검증 3) 태그 자동완성(인덱스/FTS) 4) 병합/일괄 수정 5) 사용 통계 6) 마이그레이션/인덱스 7) 캐시/무효화 8) 계약 테스트.",
+			"reasoning": "표준 CRUD이나 데이터 마이그레이션/인덱싱과 캐시 무효화가 복잡도를 높임."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "검색 및 필터링 시스템",
+			"complexityScore": 8,
+			"recommendedSubtasks": 10,
+			"expansionPrompt": "검색 스택: 1) Postgres FTS vs ES 결정 2) 스키마/인덱스/토크나이저(한글) 3) 색인 파이프라인 4) 쿼리 DSL/하이라이트 5) Facet 6) 필터/정렬 7) 캐시/페이지네이션 8) 재색인 전략 9) 부하/지연 테스트 10) 모니터링.",
+			"reasoning": "한국어 처리·하이라이트·facet 등의 고급 요구와 색인 일관성/튜닝이 핵심."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "사용자 설정 및 프로필 관리",
+			"complexityScore": 6,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "설정/프로필: 1) 프로필 CRUD 2) 시간대 감지/저장 3) 알림 설정(DnD/간격) 4) 테마/언어/보존정책 5) 계정 삭제(완전 삭제) 6) 스키마/마이그 7) 테스트/보안.",
+			"reasoning": "일반 CRUD 중심. 계정 삭제와 프라이버시 준수가 주요 리스크."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "API 인증 및 보안 강화",
+			"complexityScore": 8,
+			"recommendedSubtasks": 10,
+			"expansionPrompt": "보안 기반: 1) JWT 액세스/리프레시 로테이션 2) 블랙리스트/세션 스토어 3) 사용자/IP 레이트리밋 4) API 키 발급/검증 5) CORS/보안 헤더 6) 입력 검증/SQLi/XSS 방어 7) 감사 로깅/추적 ID 8) 이상행동 탐지 룰 9) 비밀 관리/키 롤테이션 10) 보안 테스트/도구 통합.",
+			"reasoning": "범위가 넓고 회귀 위험이 크지만 표준 솔루션과 미들웨어 재사용 가능."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "헬스 체크 및 모니터링 시스템",
+			"complexityScore": 7,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "관측성: 1) /healthz, /readyz 2) Prometheus 메트릭 3) Grafana 대시보드 4) 알람 룰(Slack/메일) 5) 트레이싱(선택) 6) 부하 시뮬 7) 런북 8) 테스트.",
+			"reasoning": "표준 스택 기반으로 빠르게 구축 가능하나 지표/알람 튜닝 필요."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "데이터베이스 최적화 및 확장성",
+			"complexityScore": 8,
+			"recommendedSubtasks": 10,
+			"expansionPrompt": "DB 최적화: 1) 슬로우로그/프로파일링 2) 복합 인덱스 3) 파티셔닝(날짜) 4) 실행계획 튜닝 5) 풀/타임아웃 6) Read Replica 7) 백업/복구 절차 8) 아카이빙 정책 9) 자동화 스크립트 10) 모니터링/알람.",
+			"reasoning": "운영 영향이 크고 전사 데이터에 파급. 다운타임 최소화와 이행 계획이 핵심."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "K3s 배포 및 CI/CD 파이프라인",
+			"complexityScore": 8,
+			"recommendedSubtasks": 12,
+			"expansionPrompt": "배포 자동화: 1) 컨테이너 빌드 2) 레지스트리/보안 스캔 3) Helm 차트 4) 매니페스트/Secret 5) GitHub Actions 6) 환경별 값 7) 롤링 업데이트/프로브 8) 카나리/롤백 9) 관측 통합 10) 리소스 한도/오토스케일 11) 문서/런북 12) E2E 배포 테스트.",
+			"reasoning": "여러 도구/환경을 통합하며 실패 시 영향이 커 복잡도가 높음."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "통합 테스트 및 API 문서화",
+			"complexityScore": 7,
+			"recommendedSubtasks": 9,
+			"expansionPrompt": "테스트/문서화: 1) Testcontainers 설정 2) 통합 테스트 스위트 3) 픽스처/시드 4) 커버리지 수집/게이트 5) OpenAPI 생성 자동화 6) Swagger UI 7) CI 병렬화/캐시 8) 성능 시나리오 9) 문서 스냅샷 테스트.",
+			"reasoning": "표준 도구로 구현 가능하나 광범위한 엔드포인트 커버리지와 환경 격리가 필요."
+		}
+	]
+}

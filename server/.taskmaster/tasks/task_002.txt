@@ -1,0 +1,49 @@
+# Task ID: 2
+# Title: Implement Advanced Rate Limiting System
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: Build comprehensive rate limiting middleware with per-user, per-endpoint, and tier-based configurations
+# Details:
+Extend the basic rate limit config in .env to support: different limits for authenticated vs anonymous users, premium tier higher limits, per-endpoint custom limits (e.g., login endpoint stricter), sliding window algorithm implementation, Redis-backed distributed rate limiting for horizontal scaling. Use github.com/ulule/limiter/v3 or similar library. Store rate limit state in Redis with keys like 'rate:user:{uuid}:{endpoint}'.
+
+# Test Strategy:
+Load test with concurrent requests to verify limits, test rate limit headers (X-RateLimit-Remaining), verify Redis key expiration, test tier-based limits switching
+
+# Subtasks:
+## 1. Set up Redis-backed rate limiter service with sliding window [done]
+### Dependencies: None
+### Description: Create core rate limiting service using Redis for distributed state management with sliding window algorithm implementation
+### Details:
+Initialize rate limiter service using github.com/ulule/limiter/v3 library. Implement sliding window algorithm with Redis backend. Create service interface with methods: CheckLimit(userID, endpoint string) (allowed bool, remaining int), ResetLimit(userID string). Configure Redis key patterns 'rate:user:{uuid}:{endpoint}' with appropriate TTL. Set up connection pooling and error handling for Redis operations.
+
+## 2. Implement per-user rate limiting middleware [done]
+### Dependencies: 2.1
+### Description: Create middleware that enforces rate limits on a per-user basis with support for authenticated and anonymous users
+### Details:
+Build middleware function that extracts user ID from JWT or session, falls back to IP for anonymous users. Integrate with rate limiter service to check limits before processing requests. Handle rate limit exceeded scenarios with proper HTTP 429 responses. Implement user identification strategy supporting both authenticated (UUID) and anonymous (IP hash) users. Add bypass mechanism for internal service calls.
+
+## 3. Add per-endpoint configuration system [done]
+### Dependencies: 2.2
+### Description: Implement configuration management for endpoint-specific rate limits with support for custom limits per route
+### Details:
+Create configuration structure for endpoint-specific limits (e.g., stricter limits for login, password reset). Implement route matcher to identify endpoints and apply appropriate limits. Support wildcard patterns for endpoint groups. Add configuration hot-reload capability. Store configurations in config file or environment variables with format: RATE_LIMIT_LOGIN=10/minute, RATE_LIMIT_API=100/minute. Implement default fallback limits.
+
+## 4. Implement tier-based rate limits with premium support [done]
+### Dependencies: 2.3
+### Description: Add support for different rate limit tiers based on user subscription level with premium tier getting higher limits
+### Details:
+Extend user model to include tier information (free, premium, enterprise). Modify rate limiter service to check user tier and apply appropriate limits. Implement tier configuration: free=100/hour, premium=1000/hour, enterprise=unlimited. Add tier upgrade/downgrade handling with immediate effect. Create admin endpoints to manage tier assignments. Store tier limits in configuration with easy adjustment capability.
+
+## 5. Add rate limit headers to API responses [done]
+### Dependencies: 2.4
+### Description: Implement standard rate limit headers in all API responses to inform clients about their current limits and usage
+### Details:
+Add response headers: X-RateLimit-Limit (maximum requests), X-RateLimit-Remaining (requests left), X-RateLimit-Reset (reset timestamp), Retry-After (for 429 responses). Implement header injection in middleware after rate check. Calculate accurate reset times based on sliding window. Add support for multiple limit scopes in headers (per-user, per-endpoint). Ensure headers are present even for successful requests.
+
+## 6. Create comprehensive rate limiting test suite [done]
+### Dependencies: 2.5
+### Description: Develop extensive test coverage for all rate limiting scenarios including edge cases and performance testing
+### Details:
+Write integration tests for end-to-end rate limiting flows. Create load tests simulating concurrent requests from multiple users. Test Redis failure scenarios with fallback behavior. Verify rate limit accuracy under high load. Test tier switching during active sessions. Implement performance benchmarks for middleware overhead. Add tests for distributed rate limiting across multiple instances. Create test utilities for rate limit testing.
+

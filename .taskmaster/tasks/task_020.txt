@@ -1,0 +1,187 @@
+# Task ID: 20
+# Title: 통합 테스트 및 API 문서화
+# Status: pending
+# Dependencies: None
+# Priority: medium
+# Description: API 통합 테스트 스위트, OpenAPI 문서 자동 생성, 테스트 커버리지 향상 - 기본 인프라 구조 완성, 중요 빌드 오류 수정, CI/CD 파이프라인 구축
+# Details:
+Agent #3이 중요한 기반 작업을 완료했습니다.
+
+**완료된 작업:**
+1. 빌드 실패 수정 - internal/user 및 tests/integration 패키지 수정
+2. 보안 테스트 수정 - HTML 위생화 테스트 100% 통과
+3. CI/CD 파이프라인 생성 - GitHub Actions 워크플로우(.github/workflows/test.yml)
+4. 포괄적인 테스트 상태 보고서 작성 - TESTING_STATUS_REPORT.md
+
+**현재 상태:**
+- 테스트 커버리지: 평균 ~45% (많은 패키지가 0%)
+- 빌드 상태: 60% 통과 (12개 패키지 빌드 실패)
+- 인프라: Testcontainers, 픽스처, 헬퍼로 견고한 기반 구축
+- OpenAPI 문서: swaggo 기반 구조 존재, 경로 정의 필요
+
+**Swagger/OpenAPI 현황:**
+- swaggo 라이브러리 통합됨
+- docs/docs.go에 기본 스키마 정의
+- API 엔드포인트 주석 작업 필요
+
+**남은 작업:**
+1. 남은 빌드 실패 수정 (20% 노력)
+2. 0% 커버리지 모듈용 단위 테스트 확장 (40% 노력)
+3. 통합 테스트 스위트 구축 (20% 노력)
+4. E2E 테스트 시나리오 생성 (15% 노력)
+5. 성능 테스트 및 OpenAPI 문서 완성 (5% 노력)
+
+# Test Strategy:
+다단계 테스트 전략 실행 중:
+
+**완료됨:**
+- CI/CD 파이프라인 테스트 자동화 (PostgreSQL 15 + Redis 7)
+- 단위 테스트 with race detector
+- 커버리지 보고 (Codecov 통합)
+- 보안 스캐닝 (gosec)
+- 린팅 (golangci-lint)
+
+**진행 중:**
+- 통합 테스트 안정성 검증 필요
+- API 문서 정확도 테스트 설정 필요
+- 테스트 실행 시간 최적화 (목표: <2분)
+- 다양한 시나리오 커버리지 검증 필요
+
+**다음 단계:**
+- 남은 빌드 실패 해결
+- 0% 커버리지 모듈 테스트 우선순위 진행
+- OpenAPI 주석 추가
+- 통합 및 E2E 테스트 완성
+
+# Subtasks:
+## 1. 남은 빌드 실패 수정 [pending]
+### Dependencies: None
+### Description: 12개 남은 패키지의 빌드 실패 해결 - import 경로, 의존성, 스키마 불일치 수정
+### Details:
+다음 패키지의 빌드 실패 수정:
+- cmd/api, cmd/backup
+- internal/api/handlers, internal/api/routes
+- internal/apikey, internal/auth
+- internal/checkin, internal/database
+- internal/search, internal/user
+
+작업:
+1. Import 경로 및 의존성 업데이트
+2. 변경된 인터페이스에 대한 목 재생성
+3. 현재 데이터베이스 스키마와 테스트 매칭
+4. 테스트 픽스처 업데이트
+
+## 2. 0% 커버리지 핵심 모듈 테스트 작성 [pending]
+### Dependencies: 20.1
+### Description: 비즈니스 로직이 중요한 0% 커버리지 모듈들의 단위 테스트 우선 작성
+### Details:
+우선순위 모듈 테스트 작성:
+1. internal/subscription (결제 기능)
+2. internal/webhook (외부 통합)
+3. internal/backup (데이터 보호)
+4. internal/category (핵심 기능)
+5. internal/tag (핵심 기능)
+6. internal/health (모니터링)
+7. internal/export (데이터 이동성)
+
+각 모듈별로:
+- Repository 계층 테스트
+- Service 계층 테스트
+- Handler 테스트 (해당되는 경우)
+- 유틸리티 함수 테스트
+
+## 3. API 엔드포인트 통합 테스트 스위트 [pending]
+### Dependencies: 20.1
+### Description: 모든 주요 API 엔드포인트의 통합 테스트 작성
+### Details:
+통합 테스트 스위트:
+1. Checkin API - CRUD, 필터링, 페이지네이션
+2. Timeline API - 일별 타임라인, 날짜 범위 쿼리
+3. Statistics API - 주간/월간 계산, 집계
+4. Category/Tag 관리 - CRUD, 관계성
+5. Search 및 필터링 - 전체 텍스트 검색
+6. WebSocket 통합 테스트
+
+Testcontainers 활용하여 실제 DB 환경에서 테스트
+
+## 4. OpenAPI 3.0 문서 자동 생성 완성 [pending]
+### Dependencies: 20.2, 20.3
+### Description: 모든 API 엔드포인트의 Swagger 주석 추가 및 문서 생성 자동화
+### Details:
+OpenAPI 문서화 작업:
+1. 기존 swaggo 구조 활용
+2. 모든 핸들러에 Swagger 주석 추가
+3. 요청/응답 스키마 정의
+4. 인증 스키마 정의 (JWT Bearer)
+5. 문서 생성 자동화 스크립트
+6. CI에서 문서 업데이트 검증
+
+현재 docs/docs.go에 기본 구조 존재
+
+## 5. E2E 사용자 워크플로우 테스트 [pending]
+### Dependencies: 20.3
+### Description: 전체 사용자 여정을 포괄하는 End-to-End 테스트 시나리오 구현
+### Details:
+E2E 테스트 시나리오:
+1. 신규 사용자 여정 (가입 → 로그인 → 첫 체크인 → 타임라인 조회)
+2. 일간 사용 플로우 (로그인 → 다중 체크인 → 업데이트 → 통계 조회)
+3. 프리미엄 사용자 플로우 (구독 → 과거 체크인 편집 → 데이터 내보내기)
+4. 오류 복구 (네트워크 실패 → 재시도 → 성공)
+5. 동시 사용자 테스트 (경쟁 상태, 데이터 격리)
+
+실제 브라우저 환경에서 API 체인 테스트
+
+## 6. 성능 테스트 및 부하 테스트 [pending]
+### Dependencies: 20.3
+### Description: k6를 활용한 API 성능 테스트 및 데이터베이스 스트레스 테스트
+### Details:
+성능 테스트 시나리오:
+1. 체크인 생성 부하 테스트 (목표: 100 req/s)
+2. 타임라인 조회 부하 테스트 (목표: 200 req/s)
+3. 동시 사용자 시뮬레이션
+4. 데이터베이스 연결 풀 스트레스 테스트
+5. Redis 캐시 히트율 부하 상황에서 측정
+
+k6 스크립트로 자동화된 성능 테스트
+
+## 7. Swagger UI 구성 및 문서 접근성 [pending]
+### Dependencies: 20.4
+### Description: Swagger UI 설정 및 개발자 친화적인 API 문서 인터페이스 구축
+### Details:
+Swagger UI 구성:
+1. /docs 경로에 Swagger UI 서빙
+2. API 탐색 및 테스트 인터페이스
+3. 인증 토큰 입력 UI
+4. 예제 요청/응답 포함
+5. 문서 검색 기능
+6. 모바일 친화적 반응형 디자인
+
+Gin 라우터에 swag middleware 통합
+
+## 8. 테스트 커버리지 90% 달성 및 품질 게이트 [pending]
+### Dependencies: 20.2, 20.3, 20.5
+### Description: 목표 커버리지 달성 및 CI에서 품질 기준 강화
+### Details:
+커버리지 개선 작업:
+1. 현재 ~45%에서 90% 목표 달성
+2. CI에서 커버리지 게이트 강화 (80% 미달 시 실패)
+3. 크리티컬 패스 95%+ 커버리지 보장
+4. 테스트 품질 메트릭 추가
+5. 플래키 테스트 제거 및 안정성 향상
+
+특히 0% 모듈들의 체계적 테스트 추가
+
+## 9. CI/CD 최적화 및 병렬화 [pending]
+### Dependencies: 20.1, 20.2
+### Description: GitHub Actions 워크플로우 최적화, 테스트 병렬 실행, 캐싱 강화
+### Details:
+CI/CD 최적화:
+1. 테스트 병렬 실행으로 시간 단축
+2. 모듈 캐싱 최적화
+3. 조건부 테스트 실행 (변경된 패키지만)
+4. 테스트 결과 시각화
+5. 실패 시 빠른 피드백
+6. 아티팩트 관리 최적화
+
+현재 .github/workflows/test.yml 기반 개선
+

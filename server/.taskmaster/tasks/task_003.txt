@@ -1,0 +1,55 @@
+# Task ID: 3
+# Title: Complete WebSocket Real-time System
+# Status: in-progress
+# Dependencies: None
+# Priority: high
+# Description: Implement full WebSocket hub with room-based messaging, presence tracking, and event broadcasting
+# Details:
+Build on existing websocket package stubs. Implement: Hub pattern with client management, Room/channel concept for team collaboration, Message types (checkin_created, checkin_updated, user_presence, typing_indicator), Authentication via JWT in connection params, Reconnection logic with exponential backoff, Message queue for offline users using Redis Streams. Use gorilla/websocket which is already imported.
+
+# Test Strategy:
+WebSocket client integration tests, test concurrent connections, verify message broadcasting, test reconnection scenarios, load test with 1000+ connections
+
+# Subtasks:
+## 1. Implement Room/Channel Management in Hub [pending]
+### Dependencies: None
+### Description: Create room management system within the Hub to handle multiple channels for team-based communication and message isolation
+### Details:
+Extend Hub struct to include a rooms map[string]*Room, implement Room struct with client list, implement methods: CreateRoom, JoinRoom, LeaveRoom, DeleteRoom. Add room-based message broadcasting logic to ensure messages only go to clients in the same room. Include room metadata like creation time and owner.
+
+## 2. Add JWT Authentication for WebSocket Connections [pending]
+### Dependencies: None
+### Description: Implement JWT-based authentication during WebSocket handshake to ensure secure connections and user identification
+### Details:
+Extract JWT from connection params during upgrade request, validate JWT signature and expiration, extract user ID and permissions from token claims, reject connections with invalid/expired tokens. Store authenticated user info in Client struct. Handle token refresh mechanism for long-lived connections.
+
+## 3. Implement Message Types and Handlers [pending]
+### Dependencies: 3.1
+### Description: Create structured message types and corresponding handlers for different WebSocket events including checkin updates and system messages
+### Details:
+Define Message struct with Type, Payload, Timestamp fields. Implement message types: checkin_created, checkin_updated, checkin_deleted, user_presence, typing_indicator, error_message. Create handler functions for each message type. Implement JSON marshalling/unmarshalling for messages. Add message validation before processing.
+
+## 4. Add Presence Tracking and Typing Indicators [pending]
+### Dependencies: 3.1, 3.2
+### Description: Implement real-time presence system to track online users and typing status within rooms
+### Details:
+Track user online/offline status in Hub with presence map, broadcast presence changes to room members, implement heartbeat mechanism to detect disconnections, add typing indicator with timeout (3 seconds), store presence data in Redis for multi-server scenarios. Include last_seen timestamp for users.
+
+## 5. Implement Offline Message Queue with Redis Streams [pending]
+### Dependencies: 3.3
+### Description: Build message queuing system using Redis Streams to store messages for offline users and deliver upon reconnection
+### Details:
+Use Redis XADD to append messages to user-specific streams (stream key: messages:user:{uuid}), implement XREAD to retrieve pending messages on reconnect, add message TTL of 7 days, implement acknowledgment system for delivered messages using XACK, handle stream trimming to prevent unbounded growth. Include retry logic for failed deliveries.
+
+## 6. Add Reconnection Logic with Exponential Backoff [pending]
+### Dependencies: 3.2
+### Description: Implement client reconnection mechanism with exponential backoff strategy to handle network interruptions gracefully
+### Details:
+Implement reconnection attempts starting at 1 second, doubling up to 30 seconds max, preserve client state during brief disconnections (30 second grace period), restore room memberships on reconnect, resend missed messages from queue, implement connection state tracking (connecting, connected, disconnected, reconnecting). Add jitter to prevent thundering herd.
+
+## 7. Create WebSocket Integration Tests [pending]
+### Dependencies: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
+### Description: Develop comprehensive integration test suite to validate all WebSocket functionality including concurrent connections and load testing
+### Details:
+Create test client using gorilla/websocket client, test concurrent connections (100+ clients), verify message broadcasting to correct rooms, test authentication flows, simulate network interruptions for reconnection testing, load test with 1000+ concurrent connections, measure message latency and throughput. Include stress tests for room creation/deletion.
+

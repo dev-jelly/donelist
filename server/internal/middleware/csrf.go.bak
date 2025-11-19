@@ -1,0 +1,227 @@
+package middleware
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/dev-jelly/donelist/internal/security"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+const (
+	// CSRF token header and cookie names
+	CSRFTokenHeader = "X-CSRF-Token"
+	CSRFCookieName  = "csrf_token"
+	SessionIDKey    = "session_id"
+)
+
+// CSRFConfig holds configuration for CSRF middleware
+type CSRFConfig struct {
+	TokenManager   *security.CSRFTokenManager
+	Logger         *zap.Logger
+	SkipPaths      []string // Paths to skip CSRF validation
+	SafeMethods    []string // HTTP methods that don't require CSRF (GET, HEAD, OPTIONS)
+	CookieDomain   string
+	CookiePath     string
+	CookieSecure   bool
+	CookieHTTPOnly bool
+	CookieSameSite http.SameSite
+}
+
+// CSRFMiddleware creates a CSRF protection middleware using double-submit cookie pattern
+func CSRFMiddleware(cfg CSRFConfig) gin.HandlerFunc {
+	// Set defaults
+	if len(cfg.SafeMethods) == 0 {
+		cfg.SafeMethods = []string{"GET", "HEAD", "OPTIONS"}
+	}
+	if cfg.CookiePath == "" {
+		cfg.CookiePath = "/"
+	}
+	if cfg.CookieSameSite == 0 {
+		cfg.CookieSameSite = http.SameSiteStrictMode
+	}
+
+	// Build skip paths map for faster lookup
+	skipPaths := make(map[string]bool)
+	for _, path := range cfg.SkipPaths {
+		skipPaths[path] = true
+	}
+
+	// Build safe methods map
+	safeMethods := make(map[string]bool)
+	for _, method := range cfg.SafeMethods {
+		safeMethods[method] = true
+	}
+
+	return func(c *gin.Context) {
+		// Skip CSRF validation for specified paths
+		if skipPaths[c.Request.URL.Path] {
+			c.Next()
+			return
+		}
+
+		// Get or create session ID
+		sessionID := c.GetString(SessionIDKey)
+		if sessionID == "" {
+			// Try to get from cookie
+			sessionID, _ = c.Cookie("session_id")
+			if sessionID == "" {
+				// Generate new session ID
+				var err error
+				sessionID, err = security.GenerateSessionID()
+				if err != nil {
+					cfg.Logger.Error("Failed to generate session ID", zap.Error(err))
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error": "Failed to generate session",
+					})
+					c.Abort()
+					return
+				}
+
+				// Set session cookie
+				c.SetCookie(
+					"session_id",
+					sessionID,
+					int(24*time.Hour.Seconds()), // 24 hours
+					cfg.CookiePath,
+					cfg.CookieDomain,
+					cfg.CookieSecure,
+					cfg.CookieHTTPOnly,
+				)
+			}
+			c.Set(SessionIDKey, sessionID)
+		}
+
+		// For safe methods, generate and set CSRF token but don't validate
+		if safeMethods[c.Request.Method] {
+			// Check if CSRF cookie exists
+			_, err := c.Cookie(CSRFCookieName)
+			if err != nil {
+				// Generate new CSRF token
+				token, err := cfg.TokenManager.GenerateToken(sessionID)
+				if err != nil {
+					cfg.Logger.Error("Failed to generate CSRF token", zap.Error(err))
+				} else {
+					// Set CSRF cookie
+					c.SetCookie(
+						CSRFCookieName,
+						token,
+						int(1*time.Hour.Seconds()), // 1 hour
+						cfg.CookiePath,
+						cfg.CookieDomain,
+						cfg.CookieSecure,
+						false, // CSRF cookie should be readable by JS
+					)
+					// Also set in header for easy access
+					c.Header(CSRFTokenHeader, token)
+				}
+			}
+			c.Next()
+			return
+		}
+
+		// For state-changing methods, validate CSRF token
+		headerToken := c.GetHeader(CSRFTokenHeader)
+		cookieToken, err := c.Cookie(CSRFCookieName)
+		if err != nil {
+			cfg.Logger.Warn("Missing CSRF cookie",
+				zap.String("path", c.Request.URL.Path),
+				zap.String("method", c.Request.Method),
+			)
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "CSRF token missing",
+			})
+			c.Abort()
+			return
+		}
+
+		// Validate token using double-submit pattern
+		if err := cfg.TokenManager.ValidateDoubleSubmitToken(headerToken, cookieToken, sessionID); err != nil {
+			cfg.Logger.Warn("CSRF validation failed",
+				zap.String("path", c.Request.URL.Path),
+				zap.String("method", c.Request.Method),
+				zap.Error(err),
+			)
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "Invalid CSRF token",
+			})
+			c.Abort()
+			return
+		}
+
+		// Generate new token for next request (token rotation)
+		newToken, err := cfg.TokenManager.GenerateToken(sessionID)
+		if err != nil {
+			cfg.Logger.Error("Failed to rotate CSRF token", zap.Error(err))
+		} else {
+			c.SetCookie(
+				CSRFCookieName,
+				newToken,
+				int(1*time.Hour.Seconds()),
+				cfg.CookiePath,
+				cfg.CookieDomain,
+				cfg.CookieSecure,
+				false,
+				cfg.CookieSameSite,
+			)
+			c.Header(CSRFTokenHeader, newToken)
+		}
+
+		c.Next()
+	}
+}
+
+// CSRFTokenHandler provides an endpoint to get a CSRF token
+func CSRFTokenHandler(tokenManager *security.CSRFTokenManager, logger *zap.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get or create session ID
+		sessionID := c.GetString(SessionIDKey)
+		if sessionID == "" {
+			sessionID, _ = c.Cookie("session_id")
+			if sessionID == "" {
+				var err error
+				sessionID, err = security.GenerateSessionID()
+				if err != nil {
+					logger.Error("Failed to generate session ID", zap.Error(err))
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error": "Failed to generate session",
+					})
+					return
+				}
+			}
+		}
+
+		// Generate CSRF token
+		token, err := tokenManager.GenerateToken(sessionID)
+		if err != nil {
+			logger.Error("Failed to generate CSRF token", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to generate CSRF token",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"csrf_token": token,
+		})
+	}
+}
+
+// CreateDefaultCSRFConfig creates a default CSRF configuration
+func CreateDefaultCSRFConfig(tokenManager *security.CSRFTokenManager, logger *zap.Logger, isProduction bool) CSRFConfig {
+	return CSRFConfig{
+		TokenManager: tokenManager,
+		Logger:       logger,
+		SkipPaths: []string{
+			"/health",
+			"/ready",
+			"/metrics",
+		},
+		SafeMethods:    []string{"GET", "HEAD", "OPTIONS"},
+		CookiePath:     "/",
+		CookieSecure:   isProduction, // Only set secure cookie in production
+		CookieHTTPOnly: true,
+		CookieSameSite: http.SameSiteStrictMode,
+	}
+}

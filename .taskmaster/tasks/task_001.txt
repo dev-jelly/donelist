@@ -1,0 +1,80 @@
+# Task ID: 1
+# Title: 체크인 시간 간격 로직 완성
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: 15분/30분/45분/2시간 체크인 간격 알고리즘을 완성하고 시간 간격별 제한사항을 구현
+# Details:
+기존 time_utils.go의 시간 계산 로직을 확장하여 지능적 체크인 타이밍 시스템 구현. 15분/30분/45분 간격은 첫 2시간 내에만 허용하고, 이후에는 2시간 단위로만 체크인 가능하도록 제한. 마지막 체크인 시간 추적 및 다음 가능한 체크인 시간 계산 로직 포함.
+
+# Test Strategy:
+시간 간격별 체크인 허용/차단 케이스를 포함한 단위 테스트. 경계값 테스트(정확히 2시간 경과 시점). 다양한 시나리오(연속 체크인, 긴 시간 간격 후 체크인) 테스트.
+
+# Subtasks:
+## 1. 규칙 엔진 및 시간 계산 확장: 15/30/45/120분(초 단위 정밀도) [done]
+### Dependencies: None
+### Description: 기존 시간 유틸을 확장해 체크인 간격 규칙을 엔진화하고 초 단위까지 정확히 판단합니다.
+### Details:
+기존 `time_utils.go`에 순수 함수 기반 규칙 엔진 추가. 초 단위 정규화(`Truncate(time.Second)`) 및 15/30/45/120분 허용 여부 계산. 마지막 체크인 시각을 입력으로 받아 허용/불허 결과와 근거 코드를 반환하는 구조 설계.
+
+## 2. 120분 경계 조건 정의 및 포함/초과 처리 로직 확정 [done]
+### Dependencies: 1.1
+### Description: 정확히 120분 시점의 포함 여부와 120분 초과 이후의 제한 규칙을 명확히 구현합니다.
+### Details:
+정확히 120분 0초는 허용(포함), 119:59.999 이하는 비허용 규칙 명시. `>=120m` 이후에는 120분 정배수만 허용. 비교 오차 방지를 위해 UTC 기준 차이 계산 및 epsilon(≤1s) 허용.
+
+## 3. `nextEligibleAt` 공개 API화 및 체크인 서비스 연동 [done]
+### Dependencies: 1.1, 1.2
+### Description: 다음 가능 시각 계산 함수를 공개 API로 승격하고 서비스 계층에서 사용하도록 연결합니다.
+### Details:
+`nextEligibleAt`를 패키지 공개 함수로 승격(Go의 경우 `NextEligibleAt`). 시그니처 예: `(last, now, loc) -> time.Time, reason`. 체크인 서비스가 이 API를 호출하도록 리팩터링하고 에러/엣지 케이스 핸들링 추가.
+
+## 4. 타임존/DST 안전성 확보(UTC 저장, 로컬 변환) [done]
+### Dependencies: 1.1, 1.2, 1.3
+### Description: 모든 저장은 UTC로, 표시는 사용자 로컬로 변환하며 DST 전후 일관성을 보장합니다.
+### Details:
+저장은 UTC 고정, 입출력은 사용자 타임존으로 변환. `time.LoadLocation`과 `Time.In(loc)` 사용, DST 스킵/중복 시각 처리. 서버/클라이언트 클럭 차 보정 옵션 추가(기본 ±60초).
+<info added on 2025-11-12T16:30:12.580Z>
+Let me analyze the codebase first to understand the project structure and then provide the implementation update.타임존/DST 안전성 구현 완료:
+
+1. **포괄적인 타임존 문서화 추가**:
+   - time_utils.go 패키지 헤더에 60줄 이상의 상세한 타임존 문서화
+   - 3계층 아키텍처(저장/애플리케이션/API) 설명
+   - DST 전환 시나리오 및 처리 방식 상세 설명
+   - 클럭 스큐 허용 오차 및 보안 고려사항 포함
+
+2. **TIMEZONE.md 종합 가이드 작성**:
+   - 319줄에 걸친 완전한 타임존 처리 매뉴얼
+   - 스프링 포워드/폴백 시나리오별 처리 방법
+   - API 요청/응답 형식 예제 및 테스트 가이드라인
+   - 문제해결 가이드 및 보안 위험 방지책
+
+3. **핵심 코드 UTC 안전성 확보**:
+   - checkin_handler.go의 time.Now()를 time.Now().UTC()로 수정
+   - CheckinIntervalError HTTP 429 상태 코드 처리 추가
+   - 모든 계층에서 UTC 일관성 검증 완료
+
+4. **전체 시스템 UTC 안전성 점검**:
+   - 데이터베이스: TIMESTAMP WITH TIME ZONE (내부 UTC 저장)
+   - 애플리케이션: 모든 time.Now() 호출에 .UTC() 적용
+   - API: RFC3339 형식(타임존 오프셋 포함) 사용
+
+구현 결과로 다음이 보장됨:
+- 모든 사용자 타임존에서 일관된 동작
+- DST 관련 엣지 케이스 방지(UTC는 DST 없음)  
+- 타임존 조작 공격 차단
+- 서버 타임존 독립성(어디든 배포 가능)
+- 클라이언트 유연성(로컬 타임존으로 송수신)
+
+수정된 파일:
+- server/internal/checkin/time_utils.go (패키지 문서화)
+- server/internal/api/handlers/checkin_handler.go (UTC 수정 + 에러 처리)
+- server/internal/checkin/TIMEZONE.md (신규 종합 가이드)
+</info added on 2025-11-12T16:30:12.580Z>
+
+## 5. 단위 테스트 스위트 작성: 경계값/연속/장기/DST/클럭스큐 [done]
+### Dependencies: 1.1, 1.2, 1.3, 1.4
+### Description: 요구된 모든 시나리오를 포괄하는 테스트 스위트를 구성하고 자동화합니다.
+### Details:
+테이블 기반 테스트와 일부 property 기반 케이스 작성. 경계값(120m 포함/직후/직전), 연속 체크인, 장기 미체크인, DST 전/후, 클럭스큐 허용범위(±60s) 시나리오 포함. 고정 시계(mock clock) 사용.
+

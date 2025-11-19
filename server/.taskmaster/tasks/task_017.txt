@@ -1,0 +1,49 @@
+# Task ID: 17
+# Title: Build Admin Dashboard API
+# Status: pending
+# Dependencies: 4, 13
+# Priority: low
+# Description: Create administrative endpoints for system management and user support
+# Details:
+Implement admin-only endpoints with role checking: GET/POST /admin/users for user management, GET /admin/metrics for system metrics, POST /admin/announcements for system messages, GET /admin/logs for audit trail access, POST /admin/feature-flags for feature toggling. Add admin role to RBAC system, implement admin action audit logging, create impersonation capability for support.
+
+# Test Strategy:
+Test role-based access control, verify audit logging, test impersonation safety, verify admin actions, security test admin endpoints
+
+# Subtasks:
+## 1. Implement RBAC System with Admin Role [pending]
+### Dependencies: None
+### Description: Create a comprehensive role-based access control system that supports admin, user, and potentially other roles with proper permission checking
+### Details:
+Design RBAC database schema with roles and permissions tables. Create Role type and constants (AdminRole, UserRole). Implement role checking functions like IsAdmin(), HasPermission(). Add role field to User struct and database migration. Create role assignment and revocation logic.
+
+## 2. Create Admin Authentication Middleware [pending]
+### Dependencies: 17.1
+### Description: Build middleware that verifies admin role access for protected endpoints and integrates with existing auth system
+### Details:
+Create AdminOnly middleware function that checks user.role == 'admin'. Implement proper error responses (403 Forbidden for non-admins). Add request context enrichment with admin user details. Support for service accounts and API key authentication for automated admin tasks. Add rate limiting specific to admin endpoints.
+
+## 3. Build User Management Admin Endpoints [pending]
+### Dependencies: 17.1, 17.2
+### Description: Implement admin endpoints for viewing, modifying, and managing user accounts including suspension and deletion capabilities
+### Details:
+Create GET /admin/users with pagination, filtering by status/tier/created date. Implement POST /admin/users/:id for updating user details, tier, status. Add DELETE /admin/users/:id with soft delete. Create POST /admin/users/:id/suspend and /unsuspend endpoints. Add user search functionality with email/name filters. Include user activity summary in responses.
+
+## 4. Implement System Metrics and Monitoring Endpoints [pending]
+### Dependencies: 17.2
+### Description: Create endpoints that expose system health, usage statistics, and performance metrics for administrative monitoring
+### Details:
+Build GET /admin/metrics endpoint returning active users count, check-ins per day/week/month, database size and performance metrics, API response times, error rates. Implement GET /admin/health for system status. Add GET /admin/logs with filtering by level, service, timerange. Create metrics aggregation service that collects data periodically. Include cache hit rates and queue depths.
+
+## 5. Create Feature Flags Management System [pending]
+### Dependencies: 17.2
+### Description: Build a dynamic feature flag system allowing admins to enable/disable features without deployment
+### Details:
+Create feature_flags table with name, enabled, rollout_percentage, user_whitelist fields. Implement POST /admin/feature-flags for creating/updating flags. Add GET /admin/feature-flags for listing all flags. Create FeatureFlag service with IsEnabled(flagName, userId) function. Implement percentage-based rollouts and user whitelisting. Add webhook notifications for flag changes. Cache flags in memory with TTL.
+
+## 6. Implement Audit Logging and User Impersonation [pending]
+### Dependencies: 17.1, 17.2, 17.3
+### Description: Create comprehensive audit trail for admin actions and safe impersonation capability for user support
+### Details:
+Create admin_audit_logs table tracking action, admin_id, target_user_id, changes_json, timestamp. Implement audit logging middleware that captures all admin API calls. Build POST /admin/impersonate/:userId endpoint generating temporary token. Add impersonation safeguards: time limits, action restrictions, clear audit trail. Create GET /admin/audit-logs endpoint with filtering. Add automatic audit log retention policy (90 days).
+

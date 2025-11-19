@@ -1,0 +1,55 @@
+# Task ID: 8
+# Title: Implement Advanced Search and Filtering
+# Status: done
+# Dependencies: None
+# Priority: medium
+# Description: Build full-text search and complex filtering system for checkins with PostgreSQL
+# Details:
+Implement PostgreSQL full-text search using tsvector/tsquery, create GIN indexes for performance, add search endpoints with filters: date range, categories, tags, keywords. Implement faceted search for tag/category suggestions, add search history for users, implement saved searches for premium users. Use database/sql with proper query building to prevent SQL injection.
+
+# Test Strategy:
+Test search accuracy, verify SQL injection prevention, test index performance, test filter combinations, benchmark search speed
+
+# Subtasks:
+## 1. Set up PostgreSQL full-text search infrastructure [done]
+### Dependencies: None
+### Description: Create tsvector columns and triggers for maintaining searchable text indexes on checkins table
+### Details:
+Add tsvector column to checkins table, create trigger to automatically update tsvector on insert/update, configure text search configuration for English language, add support for multiple searchable fields (title, description, notes)
+
+## 2. Create GIN indexes for search performance [done]
+### Dependencies: 8.1
+### Description: Build GIN indexes on tsvector columns and implement index maintenance strategy
+### Details:
+Create GIN index on checkins tsvector column, add partial indexes for filtered searches, implement index maintenance job for VACUUM and REINDEX operations, monitor index size and performance metrics
+
+## 3. Build secure query builder with filter support [done]
+### Dependencies: 8.1
+### Description: Implement parameterized query builder supporting full-text search and multiple filter types
+### Details:
+Create QueryBuilder struct with methods for adding search terms, date range filters, category filters, tag filters, implement SQL injection prevention using parameterized queries, add query validation and sanitization, support AND/OR logic for filters
+
+## 4. Implement search API endpoints [done]
+### Dependencies: 8.3
+### Description: Create RESTful endpoints for search operations with pagination and sorting support
+### Details:
+Implement GET /api/search/checkins with query parameters, add pagination using cursor-based approach, implement sorting by relevance/date/category, add response caching headers, implement request validation using validator/v10
+
+## 5. Add faceted search for suggestions [done]
+### Dependencies: 8.3, 8.4
+### Description: Implement faceted search to provide tag and category suggestions based on search results
+### Details:
+Create aggregation queries for tag/category counts within search results, implement GET /api/search/facets endpoint, add caching for frequently used facets, optimize queries using CTEs or materialized views, implement facet filtering logic
+
+## 6. Implement search history tracking [done]
+### Dependencies: 8.4
+### Description: Build system to track and manage user search history with privacy considerations
+### Details:
+Create search_history table with user_id, search_query, timestamp, result_count, implement POST endpoint to save searches, add GET /api/users/{id}/search-history with pagination, implement privacy controls for clearing history, add automatic cleanup for old entries
+
+## 7. Create saved searches for premium users [done]
+### Dependencies: 8.4, 8.6
+### Description: Implement saved search functionality with notifications for new matching results
+### Details:
+Create saved_searches table linking users to search queries with notification preferences, implement CRUD endpoints for managing saved searches, add background job to check for new matches, integrate with notification system for alerts, enforce premium user restrictions
+

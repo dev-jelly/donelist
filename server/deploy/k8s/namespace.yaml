@@ -1,0 +1,8 @@
+# Namespace for Donelist application
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: donelist
+  labels:
+    app: donelist
+    environment: production

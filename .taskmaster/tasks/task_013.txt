@@ -1,0 +1,159 @@
+# Task ID: 13
+# Title: 카테고리 및 태그 관리 시스템 확장
+# Status: in-progress
+# Dependencies: None
+# Priority: medium
+# Description: 커스텀 카테고리 생성, 색상 지정, 태그 자동완성 시스템 개발
+# Details:
+사용자별 커스텀 카테고리 CRUD. 카테고리 색상 팔레트 관리. 태그 자동완성 및 추천 시스템. 카테고리 통계 및 사용 빈도 분석. 카테고리 병합 및 일괄 수정. 기본 카테고리 템플릿 제공.
+
+# Test Strategy:
+카테고리 CRUD 동작 테스트. 색상 유효성 검증 테스트. 태그 자동완성 정확도 테스트. 카테고리 통계 계산 테스트. 대용량 태그 데이터 성능 테스트.
+
+# Subtasks:
+## 1. 카테고리/태그 데이터 모델 설계 및 초기 마이그레이션 [done]
+### Dependencies: None
+### Description: 카테고리·태그·연결(태깅) 스키마를 정의하고 초기 마이그레이션을 작성합니다.
+### Details:
+카테고리(categories), 태그(tags), 태깅(taggings) 테이블과 제약(소유자별 고유 슬러그, 소프트 삭제, 외래키) 설계. 기본 카테고리 템플릿 시드 데이터 포함. 이름/슬러그/정규화 컬럼에 인덱스 설계 및 롤백 스크립트 준비.
+<info added on 2025-11-13T05:05:32.604Z>
+기존 스키마 분석 결과를 반영한 향상 계획:
+
+**기존 구조**
+- categories: id, user_id, name, color, icon, timestamps 존재
+- tags: id, user_id, name, created_at 존재  
+- checkin_tags 연결 테이블 존재
+
+**필요한 향상사항**
+1. categories/tags 테이블에 slug 컬럼 추가 (URL 친화적 이름용)
+2. 소프트 삭제를 위한 deleted_at 컬럼 추가
+3. 통계용 usage_count 추적 컬럼 추가
+4. color 검증 제약조건 추가
+5. 자동완성용 trigram 인덱스 생성 (pg_trgm 확장 필요)
+6. 기본 카테고리 템플릿 시드 데이터 생성
+7. 미래 확장성을 위한 metadata JSONB 컬럼 추가
+
+**마이그레이션 계획**
+- 000014_enhance_categories_tags.up.sql 생성
+- 모든 새 컬럼과 제약조건 추가
+- 기본 템플릿 시드 데이터 삽입
+- 검색/자동완성용 적절한 인덱스 생성
+- 롤백 마이그레이션 작성
+</info added on 2025-11-13T05:05:32.604Z>
+<info added on 2025-11-13T05:37:08.500Z>
+카테고리/태그 스키마 확장 마이그레이션 구현 완료:
+
+✅ **000014_enhance_categories_tags.up.sql / down.sql 파일 생성**
+- categories/tags 테이블 스키마 확장
+- slug 컬럼 (사용자별 고유), deleted_at (소프트 삭제), usage_count (통계)
+- metadata JSONB (확장성), description TEXT 추가
+- color 검증 제약조건 (hex 형식), trigram 인덱스 (자동완성)
+
+✅ **데이터베이스 함수 및 트리거**
+- update_tag_usage_count() / update_category_usage_count() 자동 통계 업데이트
+- create_default_categories_for_user(UUID) 신규 사용자 템플릿 복사
+- checkin_tags/checkins 테이블 변경 시 자동 트리거 실행
+
+✅ **기본 카테고리 템플릿 6개**
+- Work, Personal, Health, Learning, Social, Hobbies
+- 각각 컬러/아이콘/설명/메타데이터 포함
+
+✅ **성능 최적화 인덱스**
+- GIN trigram 인덱스 (자동완성), JSONB 메타데이터 인덱스
+- slug/deleted_at/usage_count 표준 인덱스
+
+**다음 단계**: PostgreSQL 실행 환경에서 마이그레이션 테스트 및 검증 필요
+</info added on 2025-11-13T05:37:08.500Z>
+
+## 2. 사용자별 카테고리 CRUD API/서비스 구현 [done]
+### Dependencies: 13.1
+### Description: 인증 사용자 기준의 카테고리 생성·조회·수정·삭제 기능을 구현합니다.
+### Details:
+엔드포인트(POST/GET/PATCH/DELETE /categories, 상세 조회)와 소유권 검사, 슬러그 자동 생성, 페이지네이션/정렬, 소프트 삭제 및 복구, 감사 로그. 신규 사용자에 기본 템플릿 자동 생성 로직 포함.
+<info added on 2025-11-13T13:39:33.050Z>
+최종 구현 완료: 사용자별 카테고리 CRUD API/서비스가 완전히 구현되었습니다.
+
+구현된 구조:
+- 핸들러 계층 (category_handler.go): 모든 CRUD 엔드포인트(POST/GET/PATCH/DELETE) 구현, 인증 및 검증, 에러 처리
+- 서비스 계층 (service.go): 이름 검증(최대 50자), 중복 이름 검사, 색상 형식 검증(#RRGGBB), 포괄적 에러 처리
+- 저장소 계층 (repository.go): 모든 쿼리에서 사용자 소유권 강제 적용으로 교차 사용자 데이터 접근 방지
+
+핵심 기능:
+- 사용자 소유권: 모든 작업에서 user_id 매칭 강제로 무단 접근 방지
+- 입력 검증: 이름 길이(최대 50자), 필수 필드, 16진수 색상 형식(#RRGGBB)  
+- 중복 방지: 사용자별 이름 고유성 강제(다른 사용자는 동일한 카테고리명 사용 가능)
+- 선택적 필드: 색상 및 아이콘 필드는 선택사항(nullable)
+- API 라우트: /api/v1/categories에서 인증 미들웨어와 함께 등록
+- Swagger 문서화: 모든 엔드포인트에 @Summary, @Description, @Tags, @Param, @Success, @Failure 주석
+
+테스트 커버리지:
+- 서비스 단위 테스트: 32개 테스트 케이스 모든 CRUD 작업, 검증, 에러 처리, 엣지 케이스 - 모두 통과
+- 저장소 단위 테스트: 18개 테스트 케이스, 데이터베이스 작업 및 소유권 검사 - Docker 필요
+- 통합 테스트: 28개 종단간 테스트 케이스, 전체 API 플로우, 인증, 권한, 소유권 격리
+
+파일 생성/수정:
+- /server/tests/integration/category_test.go (신규 - 534줄)
+- /server/internal/category/service_test.go (신규 - 493줄)  
+- /server/internal/category/repository_test.go (신규 - 374줄)
+- /server/internal/category/repository.go (수정 - RepositoryInterface 추가)
+- /server/internal/category/service.go (수정 - 테스트 가능성을 위한 RepositoryInterface 사용)
+- /server/internal/testutil/fixtures.go (수정 - CreateTestUser 헬퍼 추가)
+</info added on 2025-11-13T13:39:33.050Z>
+
+## 3. 카테고리 색상 팔레트 검증 및 관리 [in-progress]
+### Dependencies: 13.2
+### Description: HEX/HSL 유효성, 대비비율, 중복 방지 및 팔레트 추천을 제공합니다.
+### Details:
+서버단 색상 포맷 검증(#RRGGBB/HSL), WCAG AA 대비비율 체크, 사용자별 색상 중복 방지, 허용 팔레트·추천 API 제공, 잘못된 색상 입력 시 기본 색상 폴백 처리.
+<info added on 2025-11-14T04:00:04.211Z>
+현재 코드베이스를 분석하여 색상 팔레트 검증 및 관리 시스템 구현을 시작하겠습니다.분석한 현재 상태: 
+
+1. **기본 HEX 색상 검증**: security/validation.go:234에 validateHexColor 함수가 이미 존재함
+2. **카테고리 구조**: internal/category/service.go:60-65와 repository.go에서 기본적인 HEX 색상 유효성 검증 구현됨
+3. **HSL 지원 없음**: 코드베이스에 HSL 색상 포맷 처리 기능 없음
+4. **WCAG 대비비율 체크 없음**: 접근성 관련 대비비율 검증 기능 없음
+5. **색상 중복 방지 없음**: 사용자별 색상 중복 체크 로직 없음
+
+구현 계획:
+1. HSL 색상 포맷 검증 추가 (security/validation.go에 validateHSLColor 함수)
+2. WCAG AA 대비비율 체커 (새로운 color package 생성)  
+3. 색상 중복 방지 (category/repository.go에 ColorExists 메서드 추가)
+4. 색상 팔레트 추천 API (category/service.go에 GetRecommendedColors 메서드)
+5. 기본 색상 폴백 처리 (잘못된 색상 입력 시 기본값 적용)
+
+현재 진행 상황: security/validation.go의 기본 HEX 검증 확인 완료, HSL 검증 로직과 WCAG 대비비율 체크를 위한 새로운 color utility 패키지 계획, category 서비스에서 색상 중복 방지 및 추천 기능 구현 예정
+</info added on 2025-11-14T04:00:04.211Z>
+
+## 4. 태그 자동완성/추천 엔진(FTS/트라이그램) 구축 [done]
+### Dependencies: 13.1
+### Description: PostgreSQL FTS와 트라이그램 인덱스로 실시간 자동완성·추천을 구현합니다.
+### Details:
+tags 테이블에 tsvector 컬럼과 GIN 인덱스, normalized 컬럼에 트라이그램 인덱스. GET /tags/suggest?q= API, 접두사 가중치·사용량 점수 랭킹, 한글 처리, 동의어 테이블·최대 N 제한·디바운스 고려.
+<info added on 2025-11-13T05:58:01.105Z>
+구현 완료: PostgreSQL pg_trgm 확장 기반 고도화된 태그 자동완성 엔진. Tag 모델에 slug, usage_count, soft delete 필드 추가. SearchByPrefix(접두사 매칭), SearchWithTrigram(유사도 0.3 임계값 퍼지 검색), SuggestTags(쿼리 길이별 지능형 라우팅) 메서드 구현. 인기도 기반 랭킹, 대소문자 무관 검색, GIN 인덱스 성능 최적화 적용. migration 000014 필수 적용, 최대 50개 결과 제한, 디버그 로깅 포함.
+</info added on 2025-11-13T05:58:01.105Z>
+
+## 5. 카테고리 병합 및 일괄 수정 기능 [pending]
+### Dependencies: 13.2
+### Description: 복수 카테고리 병합과 대량 속성 변경을 트랜잭션으로 안전하게 처리합니다.
+### Details:
+POST /categories/merge, /categories/bulk-update 구현. 병합 시 참조 재매핑, 충돌 해결, 리다이렉트 맵 저장, idempotency 키, 대량 처리 시 청크·백그라운드 잡 지원, 감사 로그 기록.
+
+## 6. 사용 통계 수집 파이프라인과 대시보드 집계 [pending]
+### Dependencies: 13.2, 13.4
+### Description: 카테고리·태그 사용 이벤트를 수집하고 주·월 집계를 제공합니다.
+### Details:
+이벤트(아이템 태깅/카테고리 지정) 적재 테이블과 배치 잡으로 metrics.* 집계 테이블/머티리얼라이즈드 뷰 생성. GET /analytics/category-usage, /analytics/tag-usage API 제공, 중복 방지 마커·보존 기간 정책 포함.
+
+## 7. 캐시 도입 및 무효화 전략(카테고리 목록·태그 추천) [pending]
+### Dependencies: 13.2, 13.4, 13.5, 13.6
+### Description: Redis 캐시를 도입하고 CRUD/병합/집계 이벤트로 무효화합니다.
+### Details:
+키 설계(user:{id}:categories, user:{id}:tag:suggest:{q}), TTL·ライトス루 전략, 이벤트 기반 무효화 훅, 멀티 노드용 Redis Pub/Sub, 캐시 메트릭·서킷 브레이커·폴백 구현, 제안 API 레이트 리밋.
+
+## 8. 계약 테스트 및 스키마 검증(OpenAPI/Pact) [pending]
+### Dependencies: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7
+### Description: 소비자 주도 계약 테스트와 OpenAPI 스키마 유효성을 CI에 통합합니다.
+### Details:
+코드 기반 OpenAPI 생성 및 Spectral 린트, Swagger UI 배포. Pact로 주요 엔드포인트 계약 정의·프로바이더 검증, 하위 호환성 규칙·브레이킹 체인지 가이드 수립, 음수 케이스 포함.
+

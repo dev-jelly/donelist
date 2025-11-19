@@ -1,0 +1,234 @@
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/dev-jelly/donelist/internal/sync"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// SyncHandler handles sync-related HTTP requests
+type SyncHandler struct {
+	syncService *sync.Service
+	logger      *zap.Logger
+}
+
+// NewSyncHandler creates a new sync handler
+func NewSyncHandler(syncService *sync.Service, logger *zap.Logger) *SyncHandler {
+	return &SyncHandler{
+		syncService: syncService,
+		logger:      logger,
+	}
+}
+
+// Sync handles POST /api/v1/sync
+// @Summary Batch sync operations
+// @Description Process a batch of offline operations from client
+// @Tags sync
+// @Accept json
+// @Produce json
+// @Param request body sync.SyncRequest true "Sync request with operations"
+// @Success 200 {object} sync.SyncResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/sync [post]
+func (h *SyncHandler) Sync(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+
+	var req sync.SyncRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("Invalid sync request",
+			zap.Error(err),
+			zap.String("user_id", userID.(uuid.UUID).String()),
+		)
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request: " + err.Error()})
+		return
+	}
+
+	// Validate device ID
+	if req.DeviceID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "device_id is required"})
+		return
+	}
+
+	// Process sync request
+	response, err := h.syncService.ProcessSyncRequest(c.Request.Context(), userID.(uuid.UUID), &req)
+	if err != nil {
+		h.logger.Error("Failed to process sync request",
+			zap.Error(err),
+			zap.String("user_id", userID.(uuid.UUID).String()),
+			zap.String("device_id", req.DeviceID),
+		)
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "sync failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// GetSyncStatus handles GET /api/v1/sync/status
+// @Summary Get sync status
+// @Description Get current sync status for a device
+// @Tags sync
+// @Produce json
+// @Param device_id query string true "Device ID"
+// @Success 200 {object} sync.SyncStatusResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/sync/status [get]
+func (h *SyncHandler) GetSyncStatus(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+
+	deviceID := c.Query("device_id")
+	if deviceID == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "device_id is required"})
+		return
+	}
+
+	status, err := h.syncService.GetSyncStatus(c.Request.Context(), userID.(uuid.UUID), deviceID)
+	if err != nil {
+		h.logger.Error("Failed to get sync status",
+			zap.Error(err),
+			zap.String("user_id", userID.(uuid.UUID).String()),
+			zap.String("device_id", deviceID),
+		)
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "failed to get sync status"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// GetConflicts handles GET /api/v1/sync/conflicts
+// @Summary Get conflicts
+// @Description Get all conflicted sync operations requiring manual resolution
+// @Tags sync
+// @Produce json
+// @Success 200 {array} sync.SyncQueueItem
+// @Failure 401 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/sync/conflicts [get]
+func (h *SyncHandler) GetConflicts(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+
+	conflicts, err := h.syncService.GetConflicts(c.Request.Context(), userID.(uuid.UUID))
+	if err != nil {
+		h.logger.Error("Failed to get conflicts",
+			zap.Error(err),
+			zap.String("user_id", userID.(uuid.UUID).String()),
+		)
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "failed to get conflicts"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"conflicts": conflicts,
+		"count":     len(conflicts),
+	})
+}
+
+// ResolveConflict handles POST /api/v1/sync/conflicts/resolve
+// @Summary Resolve conflict
+// @Description Manually resolve a sync conflict
+// @Tags sync
+// @Accept json
+// @Produce json
+// @Param request body sync.ConflictResolutionRequest true "Conflict resolution"
+// @Success 200 {object} SuccessResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/sync/conflicts/resolve [post]
+func (h *SyncHandler) ResolveConflict(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+
+	var req sync.ConflictResolutionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Warn("Invalid conflict resolution request",
+			zap.Error(err),
+			zap.String("user_id", userID.(uuid.UUID).String()),
+		)
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "invalid request: " + err.Error()})
+		return
+	}
+
+	err := h.syncService.ResolveConflict(c.Request.Context(), userID.(uuid.UUID), &req)
+	if err != nil {
+		h.logger.Error("Failed to resolve conflict",
+			zap.Error(err),
+			zap.String("user_id", userID.(uuid.UUID).String()),
+			zap.String("idempotency_key", req.IdempotencyKey),
+		)
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, SuccessResponse{
+		Message: "conflict resolved successfully",
+	})
+}
+
+// IdempotentCreate handles POST /api/v1/sync/checkins with idempotency
+// @Summary Create checkin with idempotency
+// @Description Create a new checkin with idempotency token support
+// @Tags sync
+// @Accept json
+// @Produce json
+// @Param Idempotency-Key header string true "Idempotency key"
+// @Param request body CreateCheckinRequest true "Checkin data"
+// @Success 200 {object} CheckinResponse
+// @Success 201 {object} CheckinResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 401 {object} ErrorResponse
+// @Failure 409 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/sync/checkins [post]
+func (h *SyncHandler) IdempotentCreate(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ErrorResponse{Error: "unauthorized"})
+		return
+	}
+
+	// Get idempotency key from header
+	idempotencyKey := c.GetHeader("Idempotency-Key")
+	if idempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Idempotency-Key header is required"})
+		return
+	}
+
+	// TODO: Check if operation with this idempotency key already exists
+	// If exists and completed, return cached response
+	// If exists and processing, return 409 Conflict
+	// If not exists, proceed with create
+	// userID will be used when implementation is completed: userID.(uuid.UUID)
+
+	h.logger.Info("Idempotent create requested but not yet implemented",
+		zap.String("user_id", userID.(uuid.UUID).String()),
+		zap.String("idempotency_key", idempotencyKey),
+	)
+
+	c.JSON(http.StatusNotImplemented, ErrorResponse{Error: "not yet implemented"})
+}
+
+// SuccessResponse represents a successful operation response

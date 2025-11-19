@@ -1,0 +1,40 @@
+{
+  "settings": {
+    "title": "Settings",
+    "theme": {
+      "title": "Theme",
+      "description": "Choose how Donelist looks to you",
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    },
+    "language": {
+      "title": "Language",
+      "description": "Select your preferred language",
+      "en": "English",
+      "ko": "한국어",
+      "ja": "日本語"
+    },
+    "dataRetention": {
+      "title": "Data Retention",
+      "description": "Manage how long your data is kept",
+      "autoDelete": "Automatic deletion",
+      "autoDeleteDescription": "Automatically delete old check-ins",
+      "retentionPeriod": "Keep data for",
+      "options": {
+        "30days": "30 days",
+        "30daysDesc": "Delete check-ins older than 30 days",
+        "90days": "90 days",
+        "90daysDesc": "Delete check-ins older than 90 days",
+        "1year": "1 year",
+        "1yearDesc": "Delete check-ins older than 1 year",
+        "forever": "Forever",
+        "foreverDesc": "Never delete your check-ins automatically"
+      }
+    },
+    "save": "Save Changes",
+    "saving": "Saving...",
+    "saved": "Saved successfully!",
+    "error": "Failed to save settings"
+  }
+}

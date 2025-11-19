@@ -1,0 +1,53 @@
+# Ingress for Donelist API
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: donelist-api-ingress
+  namespace: donelist
+  labels:
+    app: donelist
+    component: api
+  annotations:
+    # Cert-manager for automatic TLS certificates (if installed)
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # Nginx ingress controller annotations
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # WebSocket support
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "donelist-api-service"
+
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+
+    # CORS (handled by the app, but can be configured here too)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://donelist.example.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Accept,Authorization,Content-Type,X-CSRF-Token"
+
+    # Body size for file uploads (if needed in future)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.donelist.example.com  # CHANGE THIS to your domain
+    secretName: donelist-api-tls
+  rules:
+  - host: api.donelist.example.com  # CHANGE THIS to your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: donelist-api-service
+            port:
+              number: 80

@@ -1,0 +1,343 @@
+package premium
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/dev-jelly/donelist/internal/auth"
+	"github.com/dev-jelly/donelist/internal/user"
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+// Service represents the premium features service
+type Service struct {
+	userService  *user.Service
+	featureFlags *FeatureFlagService
+	logger       *zap.Logger
+}
+
+// NewService creates a new premium service
+func NewService(userService *user.Service, featureFlags *FeatureFlagService, logger *zap.Logger) *Service {
+	return &Service{
+		userService:  userService,
+		featureFlags: featureFlags,
+		logger:       logger,
+	}
+}
+
+// RequireTier creates middleware that requires a minimum tier
+func (s *Service) RequireTier(minTier Tier) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get user from context (set by auth middleware)
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Authentication required",
+			})
+			c.Abort()
+			return
+		}
+
+		jwtClaims, ok := claims.(*auth.Claims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid authentication",
+			})
+			c.Abort()
+			return
+		}
+
+		// Get user tier
+		userTier := s.getUserTier(c.Request.Context(), jwtClaims.UserID)
+
+		// Check if user meets minimum tier
+		if CompareTiers(userTier, minTier) < 0 {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":         "Insufficient subscription tier",
+				"required_tier": string(minTier),
+				"current_tier":  string(userTier),
+				"upgrade_url":   "/subscription/upgrade",
+			})
+			c.Abort()
+			return
+		}
+
+		// Add tier to context
+		c.Set("user_tier", userTier)
+		c.Next()
+	}
+}
+
+// RequireFeature creates middleware that requires a specific feature
+func (s *Service) RequireFeature(feature Feature) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get user from context
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Authentication required",
+			})
+			c.Abort()
+			return
+		}
+
+		jwtClaims, ok := claims.(*auth.Claims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid authentication",
+			})
+			c.Abort()
+			return
+		}
+
+		// Check if user has feature
+		hasAccess, err := s.HasFeature(c.Request.Context(), jwtClaims.UserID, feature)
+		if err != nil {
+			s.logger.Error("Failed to check feature access",
+				zap.Error(err),
+				zap.String("user_id", jwtClaims.UserID),
+				zap.String("feature", string(feature)),
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to check feature access",
+			})
+			c.Abort()
+			return
+		}
+
+		if !hasAccess {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":       "Feature not available",
+				"feature":     string(feature),
+				"upgrade_url": "/subscription/upgrade",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// CheckLimit creates middleware that checks usage limits
+func (s *Service) CheckLimit(limitType string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Get user from context
+		claims, exists := c.Get("claims")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Authentication required",
+			})
+			c.Abort()
+			return
+		}
+
+		jwtClaims, ok := claims.(*auth.Claims)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "Invalid authentication",
+			})
+			c.Abort()
+			return
+		}
+
+		// Check if user is within limit
+		withinLimit, current, limit, err := s.CheckUsageLimit(c.Request.Context(), jwtClaims.UserID, limitType)
+		if err != nil {
+			s.logger.Error("Failed to check usage limit",
+				zap.Error(err),
+				zap.String("user_id", jwtClaims.UserID),
+				zap.String("limit_type", limitType),
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Failed to check usage limit",
+			})
+			c.Abort()
+			return
+		}
+
+		if !withinLimit {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":       "Usage limit exceeded",
+				"limit_type":  limitType,
+				"current":     current,
+				"limit":       limit,
+				"upgrade_url": "/subscription/upgrade",
+			})
+			c.Abort()
+			return
+		}
+
+		// Add usage info to headers
+		c.Header("X-Usage-Current", string(rune(current)))
+		c.Header("X-Usage-Limit", string(rune(limit)))
+
+		c.Next()
+	}
+}
+
+// getUserTier gets the user's subscription tier
+func (s *Service) getUserTier(ctx context.Context, userID string) Tier {
+	user, err := s.userService.GetByID(ctx, userID)
+	if err != nil || user == nil {
+		return TierFree
+	}
+
+	// Check user's tier field
+	if user.Tier != "" {
+		return Tier(user.Tier)
+	}
+
+	// Check subscription status
+	// This would typically query a subscriptions table
+	// For now, return free tier
+	return TierFree
+}
+
+// HasFeature checks if a user has access to a feature
+func (s *Service) HasFeature(ctx context.Context, userID string, feature Feature) (bool, error) {
+	// Get user tier
+	userTier := s.getUserTier(ctx, userID)
+
+	// Get user groups (for feature flag evaluation)
+	userGroups := s.getUserGroups(ctx, userID)
+
+	// Create evaluation context
+	evalCtx := &EvaluationContext{
+		UserID:     userID,
+		UserTier:   userTier,
+		UserGroups: userGroups,
+		Attributes: map[string]interface{}{
+			"tier": string(userTier),
+		},
+	}
+
+	// Check feature flag
+	return s.featureFlags.IsEnabled(ctx, string(feature), evalCtx)
+}
+
+// CheckUsageLimit checks if a user is within their usage limit
+func (s *Service) CheckUsageLimit(ctx context.Context, userID string, limitType string) (withinLimit bool, current int, limit int, err error) {
+	// Get user tier
+	userTier := s.getUserTier(ctx, userID)
+
+	// Get limit for tier
+	limit = GetLimit(userTier, limitType)
+
+	// Get current usage
+	current, err = s.getCurrentUsage(ctx, userID, limitType)
+	if err != nil {
+		return false, 0, 0, err
+	}
+
+	// Check if unlimited (-1 means unlimited)
+	if limit == -1 {
+		return true, current, limit, nil
+	}
+
+	withinLimit = current < limit
+	return withinLimit, current, limit, nil
+}
+
+// getCurrentUsage gets the current usage for a limit type
+func (s *Service) getCurrentUsage(ctx context.Context, userID string, limitType string) (int, error) {
+	// This would typically query usage statistics from the database
+	// For now, return mock data
+	switch limitType {
+	case "checkins_per_day":
+		// Query today's checkins count
+		return 5, nil
+	case "checkins_per_month":
+		// Query this month's checkins count
+		return 150, nil
+	case "categories_count":
+		// Query user's categories count
+		return 3, nil
+	case "webhooks_count":
+		// Query user's webhooks count
+		return 2, nil
+	case "exports_per_month":
+		// Query this month's exports count
+		return 0, nil
+	case "api_calls_per_hour":
+		// Query this hour's API calls count
+		return 50, nil
+	default:
+		return 0, nil
+	}
+}
+
+// getUserGroups gets the user's groups for feature flag evaluation
+func (s *Service) getUserGroups(ctx context.Context, userID string) []string {
+	// This would typically query user groups from the database
+	// For now, return empty
+	return []string{}
+}
+
+// UpgradeRequired returns a standard upgrade required response
+func UpgradeRequired(requiredTier Tier) gin.H {
+	return gin.H{
+		"error": "Upgrade required",
+		"message": "This feature requires a premium subscription",
+		"required_tier": string(requiredTier),
+		"upgrade_url": "/subscription/upgrade",
+		"features": getFeatureList(requiredTier),
+	}
+}
+
+// getFeatureList returns the list of features for a tier
+func getFeatureList(tier Tier) []string {
+	tiers := DefaultTiers()
+	config, exists := tiers[tier]
+	if !exists {
+		return []string{}
+	}
+
+	features := make([]string, len(config.Features))
+	for i, feature := range config.Features {
+		features[i] = string(feature)
+	}
+	return features
+}
+
+// InjectFeatureFlags injects feature flags into the response
+func (s *Service) InjectFeatureFlags() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Process request first
+		c.Next()
+
+		// Only inject for successful responses
+		if c.Writer.Status() >= 200 && c.Writer.Status() < 300 {
+			claims, exists := c.Get("claims")
+			if exists {
+				if jwtClaims, ok := claims.(*auth.Claims); ok {
+					// Get user's available features
+					features, err := s.getUserFeatures(c.Request.Context(), jwtClaims.UserID)
+					if err == nil {
+						c.Header("X-Features", features)
+					}
+				}
+			}
+		}
+	}
+}
+
+// getUserFeatures gets a comma-separated list of user's features
+func (s *Service) getUserFeatures(ctx context.Context, userID string) (string, error) {
+	userTier := s.getUserTier(ctx, userID)
+	tiers := DefaultTiers()
+	config, exists := tiers[userTier]
+	if !exists {
+		return "", nil
+	}
+
+	features := ""
+	for i, feature := range config.Features {
+		if i > 0 {
+			features += ","
+		}
+		features += string(feature)
+	}
+	return features, nil
+}

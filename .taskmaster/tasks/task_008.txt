@@ -1,0 +1,107 @@
+# Task ID: 8
+# Title: 실시간 WebSocket 동기화 시스템 강화
+# Status: in-progress
+# Dependencies: None
+# Priority: high
+# Description: 모든 플랫폼 간 실시간 체크인 데이터 동기화 및 충돌 해결
+# Details:
+WebSocket을 통한 실시간 체크인 브로드캐스트. 사용자별 룸 관리. 오프라인 큐 시스템(Redis 기반). last-write-wins 충돌 해결 전략. 연결 상태 모니터링 및 자동 재연결. 메시지 순서 보장.
+
+# Test Strategy:
+동시 다중 클라이언트 연결 테스트. 네트워크 단절 시나리오 테스트. 충돌 해결 로직 테스트. 메시지 순서 보장 테스트. 대용량 동시 연결 성능 테스트.
+
+# Subtasks:
+## 1. 사용자별 룸/구독 토폴로지 설계 및 서버 구현 [done]
+### Dependencies: None
+### Description: userId·팀·디바이스 기준의 개인/그룹 룸을 정의하고 서버에서 입장/퇴장, 구독, 브로드캐스트 흐름을 구현한다.
+### Details:
+네임스페이스/룸 키 규칙 수립, 멀티 노드 환경에서 Redis Pub/Sub 또는 Streams로 팬아웃 브리지 구성, 멤버십 캐시와 join/leave ACK, 샤딩 키 결정, 브로드캐스트 경로 명세와 장애 시 폴백 정의.
+<info added on 2025-11-13T05:12:53.455Z>
+1. **포괄적인 WebSocket 룸 토폴로지 시스템 구현 완료:**
+   - room_topology.go: 4가지 룸 타입(User, Team, Device, UserTeam) 정의 및 구조화된 룸 명명 규칙 구현
+   - redis_bridge.go: Redis Pub/Sub 기반 멀티 노드 팬아웃 시스템, 'ws:room:{roomID}' 채널 패턴 적용
+   - subscription_manager.go: 중앙집중식 룸 구독 관리, 자동 사용자 룸 구독 및 멤버십 추적
+
+2. **접근 제어 및 보안:**
+   - userId/teamId 기반 룸 접근 권한 검증 로직
+   - 구독 시점에서의 권한 확인으로 보안 강화
+   - 비동기 join/leave 처리로 블로킹 방지
+
+3. **확장성 및 성능 최적화:**
+   - 사용자 중심 룸은 userId, 팀 룸은 teamId 기반 샤딩
+   - Redis 브리지 선택적 적용(로컬 전용 모드로 graceful fallback)
+   - 마지막 멤버 퇴장 시 자동 룸 정리
+
+4. **모니터링 및 신뢰성:**
+   - 상태 검사 및 통계 수집 기능
+   - 우아한 종료 처리
+   - 19개 테스트 케이스 모두 통과로 안정성 검증
+
+5. **문서화:**
+   - ROOM_TOPOLOGY.md 완성 - 전체 시스템 문서, 아키텍처 다이어그램, 사용 예제, 보안 고려사항 포함
+   - 프로덕션 환경에서 바로 사용 가능한 상태
+</info added on 2025-11-13T05:12:53.455Z>
+
+## 2. 버전·증분ID 포함 메시지 스키마와 검증 미들웨어 구축 [done]
+### Dependencies: None
+### Description: 표준 메시지 스키마를 정의하고 서버/클라이언트 양단에서 필수 필드와 제약을 검증한다.
+### Details:
+envelope: version, eventType, partitionKey, seq, ts, actorId, payload. JSON Schema와 런타임 validator, 하위호환 정책, 스키마 레지스트리 배치, 검증 실패시 구조화 로그와 카운터 증가.
+<info added on 2025-11-13T05:31:11.544Z>
+구현 완료: MessageEnvelope 스키마(schema.go) - version, eventType, partitionKey, seq, ts, actorId, payload 필드 및 CheckinPayload, RoomMessagePayload, PresencePayload, TypingPayload, ErrorPayload 구조체 정의. MessageValidator(validator.go) - go-playground/validator 기반 메시지 검증, 메트릭 추적(총 검증수, 실패수, 버전/스키마/필드/페이로드 오류별 카운터), 구조화 로깅. ValidationMiddleware(validation_middleware.go) - 수신/송신 메시지 검증, 레거시 Message 형식 자동 변환(하위호환성), 파티션별 시퀀스 추적(atomic 연산), strict/non-strict 모드, zap 구조화 로깅. 포괄적 테스트: schema_test.go(8개), validator_test.go(6개), validation_middleware_test.go(6개) - 모든 기능 커버 100% 통과. v1 버전 지원, v2 마이그레이션 준비된 SchemaRegistry, 스레드 안전 atomic 카운터, 최소 성능 오버헤드.
+</info added on 2025-11-13T05:31:11.544Z>
+
+## 3. 파티션(사용자/룸) 단위 시퀀스 할당 및 순서 보장 버퍼 구현 [in-progress]
+### Dependencies: 8.2
+### Description: 파티션별 단조 증가 시퀀스를 발급하고 out-of-order 수신을 재정렬해 최종 적용 순서를 보장한다.
+### Details:
+서버에서 파티션별 seq 발급, 클라이언트 lastAckSeq 추적, 갭 감지 시 범위 재전송 요청, 재정렬 버퍼 크기/만료 정책, 중복 제거와 멱등 적용 인터페이스 제공.
+
+## 4. LWW 충돌 해결 모듈(타임스탬프+결정자) 설계/적용 [pending]
+### Dependencies: 8.2, 8.3
+### Description: 동일 리소스 동시 업데이트의 최종 승자를 LWW 규칙으로 결정하고 멱등 적용을 보장한다.
+### Details:
+compare(a,b)=ts 우선, 동률 시 actorId 또는 seq로 타이브레이크. 충돌 메타 첨부, 스냅샷/이벤트 적용 경로에 공통 라이브러리로 삽입, 클라이언트도 동일 규칙으로 프리뷰 처리.
+
+## 5. Redis 기반 오프라인 큐·재전송 파이프라인(at-least-once) [pending]
+### Dependencies: 8.2, 8.3
+### Description: 오프라인 클라이언트를 위해 메시지를 안전히 큐잉하고 재연결 시 미수신 범위를 재전송한다.
+### Details:
+Redis Streams/XREADGROUP 사용, lastAckSeq 기준 범위 재전송, 재시도·DLQ 채널, TTL/컴팩션 정책, 중복 안전 처리와 최대 보관량 설정, 소비자 그룹 리밸런싱 전략.
+
+## 6. 핸드셰이크/헬스체크 프로토콜과 연결 상태 모니터링 [in-progress]
+### Dependencies: 8.1, 8.2
+### Description: 연결 시 기능 교섭과 상태 보고를 수행하고 주기적 핑/퐁으로 헬스체크를 구현한다.
+### Details:
+handshake: clientVersion, supportedFeatures, lastAckSeq, capabilities; 서버 세션ID 발급. heartbeat 인터벌/타임아웃, 상태 머신(connected→stale→reconnect), 서버 측 세션 가비지 컬렉션.
+
+## 7. 자동 재연결, 지수 백오프+지터, 세션 재개/전체 재동기 [pending]
+### Dependencies: 8.5, 8.6
+### Description: 끊김 시 지수 백오프로 재시도하고 가능하면 세션을 재개, 실패 시 전체 재동기를 수행한다.
+### Details:
+backoff=base*2^n+랜덤지터, 상한/재설정 규칙, resume(lastAckSeq) 프로토콜, N회 실패 시 스냅샷 풀 리로드, 사용자 피드백 이벤트 및 로깅.
+
+## 8. 보안 계층: JWT 인증, 권한 검사, 레이트리밋/세션 보호 [pending]
+### Dependencies: 8.6
+### Description: JWT로 인증하고 룸 접근 권한과 요청 속도를 제한하여 남용을 방지한다.
+### Details:
+JWT 검증(발급자/만료/스코프), 룸 ACL 및 소유권 검사, per-user/IP 토큰버킷 레이트리밋, 키 롤테이션 전략, 비정상 행위 차단과 감사 로그 기록.
+
+## 9. 관측성 추가: Prometheus 메트릭, 구조화 로그, OpenTelemetry 트레이싱 [pending]
+### Dependencies: 8.6, 8.8
+### Description: 핵심 경로에 메트릭/로그/트레이싱을 삽입해 병목과 오류를 신속히 파악한다.
+### Details:
+QPS, 브로드캐스트 지연, 재전송 수, 에러율 히스토그램, 백오프 단계 카운터. 요청ID/세션ID 기반 구조화 로그. 핸드셰이크·큐·브로드캐스트에 트레이스 스팬 연결.
+
+## 10. 카나리 릴리즈 및 피처 플래그로 단계적 활성화·신속 롤백 [pending]
+### Dependencies: 8.9
+### Description: 새 동기화 경로를 일부 트래픽에만 적용하고 문제 시 즉시 롤백한다.
+### Details:
+퍼센트 롤아웃, 테넌트/사용자 타깃팅, 동적 구성 저장소, 서버 안전스위치, 실패 신호 기반 자동 롤백 스크립트와 변경 감사 기록.
+
+## 11. 부하·내구성 테스트 스크립트(k6/Locust)와 시나리오 자동화 [pending]
+### Dependencies: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.10
+### Description: 대규모 동시 접속, 장애, 폭주 상황을 재현해 SLO 준수를 검증한다.
+### Details:
+가입/구독/브로드캐스트/단절/재연결 시나리오, 네트워크 지연·패킷 손실·중복 주입, 목표 SLO(p95/99 지연, 실패율) 정의, CI 통합과 리포트 생성, 회귀 기준 설정.
+

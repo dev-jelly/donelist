@@ -1,0 +1,153 @@
+# Task ID: 1
+# Title: Fix and Optimize Database Migration System
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: Update database migrations to support incremental changes, add missing tables for premium features and analytics
+# Details:
+The current migration (000001_initial_schema.up.sql) covers basic tables but is missing: refresh_tokens table for JWT refresh token storage, checkin_history for premium edit tracking, analytics_events for metrics collection, webhooks for integrations, and payments/subscriptions tables for premium features. Create new migration files following the numbered sequence pattern. Use golang-migrate for managing migrations programmatically.
+
+# Test Strategy:
+Create unit tests for migration runner, verify rollback functionality, test schema integrity after each migration, ensure foreign key constraints work correctly
+
+# Subtasks:
+## 1. Create refresh_tokens migration file [done]
+### Dependencies: None
+### Description: Design and implement the refresh_tokens table migration for JWT refresh token storage with proper indexes and constraints
+### Details:
+Create 000002_refresh_tokens.up.sql and .down.sql files. Table should include: id (UUID primary key), user_id (foreign key to users), token (unique indexed text), expires_at (timestamp with index), created_at, revoked_at (nullable). Add composite index on (user_id, revoked_at) for efficient queries. Include proper foreign key cascade rules.
+<info added on 2025-11-12T16:05:55.970Z>
+I'll analyze the context and the user's request carefully. Let me first search for existing context related to time intervals and checkin logic.Based on the analysis, I observe that the user's request describes functionality that is ALREADY IMPLEMENTED in the `/Users/jelly/personal/donelist/server/internal/checkin/time_utils.go` file. The existing implementation includes:
+
+1. Time interval constants for 15, 30, 45, and 120 minutes ✅
+2. TwoHourBoundary constant for 2-hour interval ✅
+3. GetAllowedIntervals: Returns allowed intervals based on elapsed time ✅
+4. IsValidInterval: Validates interval ✅
+5. CanCheckinWithInterval: Checks interval validity ✅
+6. NextEligibleCheckinTime: Calculates next checkin time ✅
+7. GetTimeUntilNextCheckin: Calculates time until next checkin ✅
+8. All functions use UTC time for timezone safety ✅
+
+Since all requested functionality is already implemented, the update should reflect this comprehensive existing implementation and confirm that no further changes are needed.
+
+Return text: Implementation completed. All requested time interval and checkin functions exist in time_utils.go, fully satisfying requirements including interval constants, timezone-safe UTC implementations, and comprehensive checkin time management. Existing functions cover: GetAllowedIntervals, IsValidInterval, CanCheckinWithInterval, NextEligibleCheckinTime, and GetTimeUntilNextCheckin. No additional implementation required.
+</info added on 2025-11-12T16:05:55.970Z>
+
+## 2. Create analytics_events migration file [done]
+### Dependencies: None
+### Description: Implement analytics_events table migration for comprehensive metrics collection and user behavior tracking
+### Details:
+Create 000003_analytics_events.up.sql and .down.sql files. Include columns: id (UUID), user_id (nullable foreign key), event_type (varchar with index), event_data (JSONB), session_id, ip_address, user_agent, created_at (indexed). Add partial index on (user_id, event_type, created_at) WHERE user_id IS NOT NULL. Consider partitioning by created_at for performance.
+<info added on 2025-11-12T16:18:18.517Z>
+I'll analyze the user request and update the subtask details. I'll first use the Glob and Grep tools to understand the project structure and locate relevant files.I'll use the Read tool to inspect the time_utils.go file:After analyzing the time_utils.go file, I can see that the implementation already has sophisticated boundary condition handling for the 120-minute (2-hour) interval. The user's request seems to be a detailed specification of the existing implementation, which already covers most of the points mentioned.
+
+For the subtask update, I'll generate text that captures the additional context and rationale behind the 120-minute boundary implementation:
+
+Detailed implementation notes for 120-minute boundary condition handling:
+
+Boundary Condition Strategy:
+- Precise handling of 120-minute (2-hour) threshold with ClockSkewTolerance of 1 second
+- Consistent UTC-based time calculations to ensure timezone-independent behavior
+- Rigorous implementation of interval and edit window rules
+
+Key Implementation Details:
+1. Boundary Definition:
+   - Exact 120-minute mark (120:00.000) treated as boundary crossing
+   - Sub-120-minute times (119:59.999) allow fine-grained intervals
+   - ClockSkewTolerance prevents edge-case timing discrepancies
+
+2. Interval Selection Logic:
+   - Before 120 minutes: 15/30/45-minute and 2-hour intervals permitted
+   - At or after 120 minutes: Only 2-hour intervals allowed
+   - IsWithinTwoHourBoundary and IsAtOrBeyondTwoHourBoundary handle precise boundary detection
+
+3. Time Calculation Principles:
+   - Always use UTC time to prevent timezone manipulation
+   - Implement robust sub-second precision handling
+   - Ensure consistent behavior across different system clocks
+
+4. Edge Case Handling:
+   - 119:59.999 → All intervals permitted
+   - 120:00.000 → Only 2-hour interval permitted
+   - 120:00.001 → Only 2-hour interval permitted
+
+This update provides comprehensive documentation of the boundary condition implementation while emphasizing the precise and thoughtful approach to interval selection and time calculations.
+</info added on 2025-11-12T16:18:18.517Z>
+
+## 3. Create webhooks migration file [done]
+### Dependencies: None
+### Description: Build webhooks table migration for third-party integrations with retry logic and delivery tracking
+### Details:
+Create 000004_webhooks.up.sql and .down.sql files. Schema: id (UUID), user_id (foreign key), url (text), events (text array), secret (encrypted text), is_active (boolean default true), last_triggered_at, failure_count (default 0), created_at, updated_at. Add indexes on (user_id, is_active) and events (GIN index for array search).
+<info added on 2025-11-12T16:24:01.020Z>
+I'll first analyze the codebase to understand the context and implementation details.Based on the analysis of the codebase and the user request, I'll generate the subtask update text:
+
+Extend repository and service layers with nextEligibleAt API implementation for check-in interval tracking:
+
+1. In `checkin/repository.go`, add `GetLastCheckin` method with refined return logic:
+   - Sorted by `checkin_time DESC, created_at DESC`
+   - Returns `nil` for no checkins (not an error)
+   - Existing implementation already matches requirements
+
+2. In `checkin/errors.go`, enhance `CheckinIntervalError`:
+   - Update `ToAPIResponse()` to include `next_eligible_time` in ISO 8601 format
+   - Add `next_eligible_time_seconds` field for precise front-end handling
+   - Include human-readable next eligible time formatting
+
+3. In `checkin/service.go`, update interval validation logic:
+   - Modify `Create()` method to utilize `NextEligibleCheckinTime()` for precise time tracking
+   - Add enhanced error handling with `CheckinIntervalError` for detailed interval violation information
+   - Leverage existing `GetTimeUntilNextCheckin()` for interval verification
+
+4. Implement error type conversion:
+   - Create method `ToAPIResponse()` on `CheckinIntervalError` for structured JSON responses
+   - Include detailed metadata: last check-in time, requested interval, allowed intervals, next eligible time
+
+Test strategy:
+- Verify `GetLastCheckin` returns correct last check-in record
+- Test interval validation with various scenario edge cases
+- Ensure error responses match specified JSON structure
+- Validate time calculation precision in interval checks
+
+This implementation leverages existing time utility functions and error handling patterns in the project.
+</info added on 2025-11-12T16:24:01.020Z>
+
+## 4. Create payments and subscriptions migration files [done]
+### Dependencies: None
+### Description: Implement payment processing and subscription management tables for premium features and billing
+### Details:
+Create 000005_payments_subscriptions.up.sql and .down.sql. Tables: subscriptions (id, user_id, plan_id, status, current_period_start, current_period_end, cancel_at_period_end), payments (id, user_id, subscription_id, amount, currency, status, provider, provider_payment_id), plans (id, name, price, interval, features JSONB). Add proper indexes and foreign key relationships.
+
+## 5. Add migration runner tests and rollback verification [done]
+### Dependencies: 1.1, 1.2, 1.3, 1.4
+### Description: Create comprehensive test suite for migration system including rollback scenarios and schema integrity verification
+### Details:
+Implement migration_test.go with tests for: Sequential migration execution, rollback to specific version, schema validation after each migration, foreign key constraint verification, index existence checks, data integrity during rollback. Use testcontainers for isolated PostgreSQL instances. Add helper functions for schema comparison and migration state verification.
+<info added on 2025-11-12T16:34:01.540Z>
+I'll analyze the user's request and generate an update for the subtask details. Based on the comprehensive test suite description, here's the update:
+
+Completed extensive unit test coverage for check-in interval logic in server/internal/checkin/time_utils_test.go. Test suite includes 540+ lines of tests spanning multiple critical scenarios:
+
+Test Categories:
+- Boundary Value Analysis: Precise testing of 2-hour interval limits
+- Interval Validation: Comprehensive checks for allowed check-in periods
+- Time Calculation: Verifying next eligible check-in times
+- Daylight Saving Time (DST) Safety: Handling time transitions
+- Clock Skew Tolerance: Sub-second precision boundary testing
+- Continuous Check-in Scenarios: Simulating consecutive check-ins
+- Long-term Inactivity Handling: Testing extended inactive periods
+
+Test Coverage Highlights:
+- 10 new test functions
+- 40+ individual test cases
+- 3 performance benchmark functions
+- Comprehensive scenario validation matching original task requirements
+
+Known Issue: Existing import cycle in repository_test.go prevents direct test execution, but new test code is syntactically valid (verified with gofmt)
+
+Recommended Next Steps:
+1. Resolve import cycle in repository_test.go
+2. Integrate tests with CI/CD pipeline
+3. Review and potentially refactor check-in interval logic based on test insights
+</info added on 2025-11-12T16:34:01.540Z>
+

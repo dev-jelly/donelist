@@ -1,0 +1,127 @@
+# Task ID: 15
+# Title: 사용자 설정 및 프로필 관리
+# Status: pending
+# Dependencies: None
+# Priority: medium
+# Description: 사용자 개인화 설정, 프로필 관리, 알림 설정 시스템 구현 완료. 백엔드 API와 데이터베이스 스키마가 완전히 구현되어 라우팅 및 고급 기능 구현만 남음
+# Details:
+완전한 사용자 프로필 및 설정 시스템 구현. 6개 테이블 데이터베이스 스키마(user_profiles, user_settings, notification_settings, data_retention_settings, account_deletion_requests, settings_audit_log), Go 모델/DTO/레포지터리/서비스/핸들러 계층, Swagger 문서화를 포함한 REST API 엔드포인트, 낙관적 잠금을 통한 동시성 제어, 구조화된 로깅, 입력 검증, 에러 처리가 구현됨. 남은 작업: 라우터 연결, 타임존 유틸리티, 알림 엔진, 계정 삭제 파이프라인, 통합 테스트.
+
+# Test Strategy:
+서비스/리포지터리 단위 테스트, API 통합 테스트(권한/검증), 타임존 자동 감지 정확도 테스트, DnD 경계 시간 테스트, 계정 삭제 시 데이터 완전 삭제 검증 테스트, 낙관적 잠금 동시성 테스트, 개인정보 보호 규정 준수 테스트
+
+# Subtasks:
+## 3. 프로필 라우터 연결 및 엔드포인트 등록 [pending]
+### Dependencies: 15.2
+### Description: 구현된 프로필 핸들러를 main.go와 routes.go에서 연결하여 API 엔드포인트를 활성화합니다.
+### Details:
+cmd/api/main.go에서 profile 패키지 import 및 profileRepo, profileService, profileHandler 초기화 추가. internal/api/routes/routes.go의 SetupRoutes 함수에 profileHandler 매개변수 추가 및 프로필 라우트 그룹 생성. 인증 미들웨어 적용하여 보호된 프로필 엔드포인트 등록: GET/PATCH /profile, GET/PATCH /settings, GET/PATCH /settings/notifications, GET/PATCH /settings/data-retention, GET /profile/all. 기존 라우터 구조를 유지하면서 새 프로필 기능 통합.
+<info added on 2025-11-13T13:58:14.925Z>
+프로필 라우터 통합이 성공적으로 완료되었습니다. 구체적인 구현 내용:
+
+**cmd/api/main.go 수정 사항:**
+- profile 패키지 import 추가
+- profileRepo := profile.NewRepository(db)로 리포지토리 초기화
+- profileService := profile.NewService(profileRepo, log)로 서비스 초기화  
+- profileHandler := handlers.NewProfileHandler(profileService, log)로 핸들러 생성
+- routes.SetupRoutes()에 profileHandler 매개변수 전달
+
+**internal/api/routes/routes.go 수정 사항:**
+- SetupRoutes 함수 시그니처에 profileHandler 매개변수 추가
+- /api/v1/profile 그룹에 JWT 인증 미들웨어 적용하여 보호된 프로필 엔드포인트 등록:
+  * GET /api/v1/profile (사용자 프로필 조회)
+  * PATCH /api/v1/profile (사용자 프로필 업데이트)
+  * GET /api/v1/profile/all (모든 프로필 및 설정 조회)
+- /api/v1/settings 그룹에 JWT 인증 미들웨어 적용하여 보호된 설정 엔드포인트 등록:
+  * GET /api/v1/settings (사용자 설정 조회)
+  * PATCH /api/v1/settings (사용자 설정 업데이트)
+  * GET /api/v1/settings/notifications (알림 설정 조회)
+  * PATCH /api/v1/settings/notifications (알림 설정 업데이트)
+  * GET /api/v1/settings/data-retention (데이터 보관 설정 조회)
+  * PATCH /api/v1/settings/data-retention (데이터 보관 설정 업데이트)
+
+모든 엔드포인트는 JWT 인증 미들웨어로 보호되며, profile_handler.go의 기존 Swagger 문서 주석이 문서 재생성 시 반영될 예정입니다. 기존 라우터 패턴(auth, checkin, timeline 등)과 일관성을 유지하며 통합되었습니다.
+</info added on 2025-11-13T13:58:14.925Z>
+
+## 4. 시간대 자동 감지 유틸리티 및 DST 변경 처리 [pending]
+### Dependencies: 15.3
+### Description: 클라이언트 자동 감지와 서버 저장을 구현하고 DST 전환 및 수동 변경을 지원하는 유틸리티를 개발합니다.
+### Details:
+internal/timezone 패키지 생성. 브라우저 Intl API/모바일 OS에서 IANA 타임존 수집을 위한 클라이언트 사이드 헬퍼. GeoIP 보조 탐지를 위한 외부 서비스 연동. IANA 타임존 유효성 검증 및 DST 경계 처리 로직. 과거 데이터 보정 정책 및 세션/기기 간 동기화 메커니즘. 타임존 변경 시 알림 스케줄 재계산을 위한 이벤트 훅. 수동 타임존 선택 UI 지원을 위한 타임존 목록 API.
+
+## 5. 알림 설정 적용 엔진 및 DnD 스케줄러 구현 [pending]
+### Dependencies: 15.3
+### Description: DnD 시간대와 최소 알림 간격 설정을 스케줄러가 엄격히 준수하도록 하는 알림 엔진을 구현합니다.
+### Details:
+internal/notification 패키지 생성. DnD 시작/종료 교차 자정 처리 로직. 허용 간격(15/30/45/60/90/120/180/240분) 검증 및 첫 2시간 내 단축 간격 허용 규칙 구현. 다음 발송 가능 시각 계산 유틸리티. 백그라운드 알림 시스템과의 인터페이스 정의 및 설정 변경 훅. 사용자 타임존을 고려한 DnD 시간 계산. 알림 큐 관리 및 배치 처리 최적화.
+
+## 6. 테마/언어/데이터 보존 정책 프론트엔드 통합 [pending]
+### Dependencies: 15.3
+### Description: 테마 전환, 언어 설정, 데이터 보존기간 관리를 위한 클라이언트 사이드 통합을 구현합니다.
+### Details:
+시스템/라이트/다크 테마 전환 및 즉시 적용 로직. 언어 자동 감지와 수동 선택을 위한 i18n 로딩 메커니즘. 보존기간 옵션 정의(30/90/365일, 무기한)와 사용자 친화적 정책 설명 UI. 클라이언트-서버 설정 동기화 및 오프라인 상태 처리. CSS 커스텀 프로퍼티를 활용한 테마 시스템. 언어 변경 시 페이지 리로딩 없는 실시간 반영. 설정 변경 시 만료 데이터 정리를 위한 백그라운드 잡 트리거.
+
+## 7. 계정 삭제 파이프라인 및 데이터 완전 삭제 구현 [pending]
+### Dependencies: 15.3, 15.5, 15.6
+### Description: 사용자 요청 시 모든 관련 데이터를 안전하게 영구 삭제하고 GDPR 준수를 보장하는 시스템을 구현합니다.
+### Details:
+internal/deletion 패키지 생성. 계정 삭제 요청 플로우(이중 확인, 이메일 인증). 선택적 데이터 내보내기 제공(JSON/CSV 형식). 즉시 삭제 또는 유예 기간(7-30일) 후 영구 삭제 옵션. 모든 연관 데이터·파일·캐시·토큰·스케줄 작업 취소. 외부 통합(웹훅, OAuth 토큰) 폐기 프로세스. S3/로컬 스토리지 파일 삭제. 백업에서의 데이터 삭제 고지. 삭제 완료 감사 이벤트 기록 및 GDPR 준수 보고서 생성.
+
+## 8. 통합 테스트, 보안 검토 및 API 문서 완성 [pending]
+### Dependencies: 15.4, 15.5, 15.6, 15.7
+### Description: 모든 프로필/설정 기능에 대한 종합적인 테스트와 보안 점검을 수행하고 문서를 완성합니다.
+### Details:
+e2e 통합 테스트 시나리오 구현(프로필 생성-수정-삭제 전체 플로우). 권한 모델 및 레이트리밋 검토. 민감정보 최소 수집·마스킹 정책 적용. 감사로그 범위·보존 정책 점검. 낙관적 잠금 동시성 테스트. 입력 검증/에러 표준화 확인. OpenAPI 명세 보강 및 예제 응답 추가. 운영 가이드(설정 우선순위·예외 상황) 작성. 성능 테스트 및 쿼리 최적화.
+
+## 1. 설정·프로필 스키마 설계 및 마이그레이션 구현 [done]
+### Dependencies: None
+### Description: 프로필, 개인화 설정, 알림, 보존정책, 계정삭제를 포괄하는 DB 스키마를 설계하고 초기 마이그레이션을 적용합니다.
+### Details:
+프로필/설정/알림/보존/삭제요청/감사로그 테이블 정의, FK·고유 제약·체크 제약 추가, DnD 시간대와 알림 간격에 대한 유효성 제약, 기본값 시드(테마=system, 언어=auto, 간격=120분), 생성·수정 시각 컬럼과 낙관적 잠금 버전 필드, 롤백 가능한 마이그레이션 스크립트, 민감정보 컬럼 암호화 전략 수립을 포함합니다.
+<info added on 2025-11-13T05:23:39.335Z>
+Let me analyze the project structure to provide a comprehensive update based on the implementation details.마이그레이션 000015 구현 완료. 포괄적인 사용자 설정 스키마를 성공적으로 생성하여 다음과 같은 6개 테이블을 구축했습니다: user_profiles (프로필 정보, 타임존 자동감지, 로케일), user_settings (테마/언어/날짜시간 형식/주시작일), notification_settings (이메일/푸시 토글, 리마인더 간격, DnD 시간대와 요일 선택), data_retention_settings (자동삭제 정책, 비활성 추적), account_deletion_requests (유예기간 및 상태 관리), settings_audit_log (모든 설정 변경 감사 추적). 외래키 CASCADE 삭제, 값 유효성 체크 제약, DnD 시간 설정 보장 제약, 성능 최적화 인덱스, 낙관적 잠금 버전 필드, 신규 사용자 기본값 자동 생성 트리거, 기존 사용자 기본값 시드, 체크인 생성 시 마지막 활동 시각 자동 업데이트, 테이블별 상세 주석을 포함한 완전한 롤백 마이그레이션과 함께 구현되었습니다.
+</info added on 2025-11-13T05:23:39.335Z>
+
+## 2. 사용자 프로필 CRUD API·서비스·화면 구현 [done]
+### Dependencies: 15.1
+### Description: 프로필 조회/수정/생성/삭제 및 아바타 업로드 기능을 API와 UI로 제공합니다.
+### Details:
+REST 엔드포인트와 서비스 계층 구현, 본인만 접근 가능한 권한 체크, 표시명/소개/아바타 편집, 파일 크기·MIME 검증과 썸네일 처리, 입력 유효성 검증, 감사로그 기록, 트랜잭션 처리, 응답 캐싱 정책 수립, 에러 코드 표준화(OpenAPI 반영).
+<info added on 2025-11-13T05:44:26.600Z>
+프로필 CRUD API 백엔드 완전 구현 완료:
+
+✅ 구현된 파일들:
+- internal/profile/models.go: Profile, Settings, NotificationSettings, DataRetentionSettings 모델과 입출력 DTO, ProfileWithSettings 복합 구조체
+- internal/profile/repository.go: 프로필/설정 테이블 CRUD 작업 및 낙관적 잠금 지원 데이터베이스 계층
+- internal/profile/service.go: 모든 필드 검증을 포함한 비즈니스 로직 계층 (바이오 길이, 테마값, 시간형식, 방해금지설정, 보존정책)
+- internal/api/handlers/profile_handler.go: Swagger 어노테이션이 포함된 모든 엔드포인트의 REST API 핸들러
+
+✅ 구현된 기능들:
+- 프로필 CRUD: GET/PATCH /profile
+- 설정 CRUD: GET/PATCH /settings
+- 알림설정: GET/PATCH /settings/notifications
+- 데이터보존설정: GET/PATCH /settings/data-retention
+- 복합 엔드포인트: GET /profile/all (모든 설정을 한번에 반환)
+- 모든 업데이트에 버전 필드를 이용한 낙관적 잠금 (동시 업데이트시 409 충돌)
+- Gin 바인딩 태그와 커스텀 서비스계층 검증을 이용한 입력 유효성 검증
+- 사용자 친화적 메시지를 포함한 적절한 에러 처리
+- 사용자 범위 접근을 위한 middleware.GetUserID를 이용한 인증
+- 모든 엔드포인트에 대한 Swagger/OpenAPI 문서화 어노테이션
+- zap을 이용한 구조화된 로깅
+- 버전 검사를 포함한 트랜잭션 안전 업데이트
+
+✅ 검증 규칙:
+- 바이오: 최대 1000자
+- 아바타 URL: 최대 500자
+- 테마: light/dark/system만 허용
+- 시간형식: 12h/24h만 허용
+- 주 시작일: 0-6 (일요일-토요일)
+- 리마인더 간격: 15/30/45/60/90/120/180/240분만 허용
+- 방해금지 시간: 방해금지 활성화시 필수
+- 방해금지 요일: 1-7 (월요일-일요일)
+- 보존 일수: 0보다 커야함
+- 비활성 일수: 30일 이상 (안전 최소값)
+
+다음 단계: main.go나 라우터에서 라우트 연결, 통합 테스트 추가, 아바타 업로드/저장 구현 검토 (S3/로컬), 필요시 캐싱 계층 추가
+</info added on 2025-11-13T05:44:26.600Z>
+

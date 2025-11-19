@@ -1,0 +1,78 @@
+# Swagger Documentation Makefile
+
+.PHONY: swagger-init swagger-generate swagger-serve swagger-validate
+
+# Initialize Swagger documentation
+swagger-init:
+	@echo "Installing swag CLI..."
+	@go install github.com/swaggo/swag/cmd/swag@latest
+
+# Generate Swagger documentation
+swagger-generate:
+	@echo "Generating Swagger documentation..."
+	@swag init -g cmd/api/main.go -o docs --parseDependency --parseInternal
+
+# Serve Swagger UI locally
+swagger-serve:
+	@echo "Starting server with Swagger UI at http://localhost:8080/swagger/index.html"
+	@go run cmd/api/main.go
+
+# Validate OpenAPI spec
+swagger-validate:
+	@echo "Validating OpenAPI specification..."
+	@which swagger > /dev/null || (echo "Please install swagger validator: go install github.com/go-swagger/go-swagger/cmd/swagger@latest" && exit 1)
+	@swagger validate docs/swagger.json
+
+# Format Swagger annotations
+swagger-fmt:
+	@echo "Formatting Swagger annotations..."
+	@swag fmt
+
+# Generate SDK for multiple languages
+sdk-generate-all: sdk-typescript sdk-python sdk-go
+
+sdk-typescript:
+	@echo "Generating TypeScript SDK..."
+	@mkdir -p sdk/typescript
+	@npx @openapitools/openapi-generator-cli generate \
+		-i http://localhost:8080/swagger/doc.json \
+		-g typescript-axios \
+		-o ./sdk/typescript \
+		--additional-properties=supportsES6=true,npmName=donelist-api-client,npmVersion=1.0.0
+
+sdk-python:
+	@echo "Generating Python SDK..."
+	@mkdir -p sdk/python
+	@npx @openapitools/openapi-generator-cli generate \
+		-i http://localhost:8080/swagger/doc.json \
+		-g python \
+		-o ./sdk/python \
+		--additional-properties=packageName=donelist_api_client,projectName=donelist-api-client,packageVersion=1.0.0
+
+sdk-go:
+	@echo "Generating Go SDK..."
+	@mkdir -p sdk/go
+	@npx @openapitools/openapi-generator-cli generate \
+		-i http://localhost:8080/swagger/doc.json \
+		-g go \
+		-o ./sdk/go \
+		--additional-properties=packageName=donelist
+
+# Clean generated files
+swagger-clean:
+	@echo "Cleaning generated Swagger files..."
+	@rm -rf docs/docs.go docs/swagger.json docs/swagger.yaml
+
+# Help
+swagger-help:
+	@echo "Swagger Documentation Commands:"
+	@echo "  make swagger-init          - Install swag CLI tool"
+	@echo "  make swagger-generate      - Generate Swagger docs from annotations"
+	@echo "  make swagger-serve         - Start server with Swagger UI"
+	@echo "  make swagger-validate      - Validate OpenAPI spec"
+	@echo "  make swagger-fmt           - Format Swagger annotations"
+	@echo "  make sdk-generate-all      - Generate SDKs for all languages"
+	@echo "  make sdk-typescript        - Generate TypeScript SDK"
+	@echo "  make sdk-python            - Generate Python SDK"
+	@echo "  make sdk-go                - Generate Go SDK"
+	@echo "  make swagger-clean         - Clean generated files"

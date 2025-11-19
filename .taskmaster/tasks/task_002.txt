@@ -1,0 +1,73 @@
+# Task ID: 2
+# Title: 백그라운드 푸시 알림 시스템 구현
+# Status: pending
+# Dependencies: 1
+# Priority: high
+# Description: 시간 간격 기반으로 사용자에게 체크인 알림을 보내는 백그라운드 작업 시스템
+# Details:
+Redis 기반 작업 큐와 cron job을 활용한 알림 스케줄링 시스템. 사용자별 마지막 체크인 시간을 추적하여 15분/30분/45분/2시간 간격으로 알림 발송. FCM(Firebase Cloud Messaging) 및 APNs 연동. 사용자 시간대 고려 및 Do Not Disturb 시간 설정 지원.
+
+# Test Strategy:
+알림 스케줄링 로직 단위 테스트. FCM/APNs 모킹을 통한 통합 테스트. 다양한 시간대에서의 알림 발송 테스트. 대용량 사용자 환경에서의 성능 테스트.
+
+# Subtasks:
+## 1. Redis 지연 큐와 크론/워커 스케줄러 골격 구축 [pending]
+### Dependencies: None
+### Description: 알림용 지연 큐와 주기적 스케줄러/워커의 기본 구조를 설계·구현합니다.
+### Details:
+Redis ZSET 기반 지연 큐 키스페이스와 준비 큐를 정의하고, 크론(예: 1분)과 워커 루프를 구성합니다. 안전 종료 시그널, 헬스체크 엔드포인트, 구성 옵션(동시성, 스캔 간격)도 포함합니다.
+
+## 2. 마지막 체크인 조회 서비스와 간격 규칙 엔진 연결 [pending]
+### Dependencies: 2.1
+### Description: 사용자별 마지막 체크인 조회와 규칙 엔진을 연결해 다음 알림 시간을 계산합니다.
+### Details:
+Repository/캐시 인터페이스를 정의하고 Task 1의 간격 규칙 엔진을 연동해 nextScheduleAt을 계산합니다. 조회 실패·캐시 미스 처리와 시간 소수점 보정, 타임소스 추상화 포함.
+
+## 3. FCM/APNs 어댑터 추상화 및 모킹 가능한 송신기 구현 [pending]
+### Dependencies: 2.1, 2.2
+### Description: 푸시 전송 공통 인터페이스를 만들고 FCM/APNs 어댑터와 모킹 드라이버를 제공합니다.
+### Details:
+PushProvider 인터페이스(Send 등) 정의, 플랫폼별 페이로드 변환, 자격 증명 로딩, 오류 코드 매핑, dry-run 모드 지원. 로컬 테스트를 위한 모킹 송신기/페이크 서버 포함.
+
+## 4. 시간대(DST 포함) 보정 및 DnD(방해 금지) 규칙 적용 [pending]
+### Dependencies: 2.2
+### Description: 사용자 시간대와 DnD 설정을 반영해 허용된 시간에만 알림을 보냅니다.
+### Details:
+IANA TZ DB로 로컬 시간 계산, DST 경계 보정, DnD 조용 시간 윈도우 적용. 허용 시간 외에는 다음 허용 시점으로 재스케줄하며 기본값/예외 처리 정책 정의.
+
+## 5. 중복 방지·재시도·지수 백오프 및 DLQ 설계 [pending]
+### Dependencies: 2.1, 2.2, 2.3, 2.4
+### Description: 중복 전송 방지와 안정적 재시도, 백오프, 데드레터 큐를 구현합니다.
+### Details:
+idempotencyKey로 SETNX 기반 중복 필터링, 재시도 횟수 저장, 지수 백오프+지터 적용, 원인별 정책 분기(429/5xx), 최대 횟수 초과 시 DLQ 이동 및 모니터링 훅.
+
+## 6. 멀티테넌트 지원과 샤딩 전략 구현 [pending]
+### Dependencies: 2.1, 2.2, 2.5
+### Description: 테넌트 격리와 수평 확장을 위한 샤딩을 도입합니다.
+### Details:
+테넌트별 키 프리픽스, 전송 한도/쿼터, Consistent Hash 기반 샤드 라우팅, 워커 샤드 프로세스와 재밸런싱 절차, 테넌트별 QoS 보장 정책을 설계·구현.
+
+## 7. 관측성 삽입: 메트릭, 구조적 로그, 트레이스 [pending]
+### Dependencies: 2.1, 2.2, 2.5
+### Description: 운영 가시성을 위해 메트릭/로그/트레이스를 체계적으로 수집합니다.
+### Details:
+OpenTelemetry 카운터·히스토그램·트레이스 스팬 삽입, JSON 구조적 로그와 상관관계 ID 전파, 주요 태그(테넌트/플랫폼/결과) 표준화, 경고 알림 연동 및 대시보드 초안 작성.
+
+## 8. 대량 배치 처리와 성능 튜닝 [pending]
+### Dependencies: 2.6, 2.7, 2.5
+### Description: 대규모 사용자 대상 고효율 처리를 위한 성능 최적화를 수행합니다.
+### Details:
+배치 크기와 워커 동시성 튜닝, Redis 파이프라이닝·Lua 활용, 커넥션 풀 최적화, GC/메모리 점검, 샤드 수 탐색, 성능 회귀 방지를 위한 가드레일과 기준선 수립.
+
+## 9. 통합 테스트 스위트 구축(프로바이더 모킹 포함) [pending]
+### Dependencies: 2.1, 2.2, 2.3, 2.4, 2.5
+### Description: 끝단까지 흐름을 검증하는 통합 테스트 환경을 만듭니다.
+### Details:
+Testcontainers로 Redis 구성, 모킹 FCM/APNs 서버로 전송 경로 검증. 타임존·DnD·재시도·백오프·DLQ 시나리오를 포함한 E2E 테스트와 픽스처/시계 고정 지원.
+
+## 10. 운영 플래그와 드레인 모드 도입 [pending]
+### Dependencies: 2.1, 2.7
+### Description: 긴급 차단과 안전 종료를 위한 운영 제어 기능을 제공합니다.
+### Details:
+Feature Flag로 enqueue/send 토글, 전송 전면 중지, 드레인 모드에서 신규 큐잉 차단 후 잔여 작업 대기, 안전 중단 API와 롤백 스위치, 운영 런북 및 알림 연동.
+

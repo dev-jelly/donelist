@@ -1,0 +1,49 @@
+# Task ID: 6
+# Title: Create Export Service for Multiple Formats
+# Status: pending
+# Dependencies: 4
+# Priority: medium
+# Description: Implement data export functionality supporting CSV, JSON, and PDF formats for premium users
+# Details:
+Create export package with format handlers: CSV using encoding/csv, JSON with custom formatting, PDF using github.com/jung-kurt/gofpdf. Implement streaming for large datasets, add background job processing for large exports using worker pattern, store temporary files in object storage or filesystem, implement export history tracking. Add endpoints: POST /export/checkins, GET /export/status/{jobId}, GET /export/download/{fileId}.
+
+# Test Strategy:
+Test each export format validity, verify large dataset handling, test concurrent export jobs, verify file cleanup, test premium access control
+
+# Subtasks:
+## 1. Create Base Export Service Architecture [pending]
+### Dependencies: None
+### Description: Design and implement the foundational export service with interface definitions for format handlers and core service structure
+### Details:
+Create export package structure with ExportService interface, define FormatHandler interface with methods Export(data interface{}, writer io.Writer) error, implement service registry pattern for format handlers, create export request/response DTOs, define export job structure with status tracking, implement base error handling and logging
+
+## 2. Implement CSV Export Handler with Streaming [pending]
+### Dependencies: 6.1
+### Description: Build CSV format handler using encoding/csv with support for streaming large datasets to prevent memory issues
+### Details:
+Implement CSVHandler conforming to FormatHandler interface, use encoding/csv for proper CSV generation, implement chunked reading from database with cursor pagination, stream data directly to io.Writer avoiding full memory load, add CSV header customization, handle special characters and escaping properly, implement progress tracking for large exports
+
+## 3. Implement JSON Export Handler with Custom Formatting [pending]
+### Dependencies: 6.1
+### Description: Create JSON format handler with customizable formatting options and efficient encoding for large datasets
+### Details:
+Implement JSONHandler with FormatHandler interface, use encoding/json with streaming encoder, add options for pretty printing and minification, implement custom marshaling for complex data types, handle nested structures and relationships, add pagination metadata in JSON response, implement JSONL (JSON Lines) format option for large datasets
+
+## 4. Add PDF Generation with gofpdf Library [pending]
+### Dependencies: 6.1
+### Description: Implement PDF export handler using github.com/jung-kurt/gofpdf for formatted document generation with tables and styling
+### Details:
+Add github.com/jung-kurt/gofpdf dependency, implement PDFHandler with FormatHandler interface, create PDF templates for different export types, implement table generation with headers and data rows, add company branding and timestamps, handle page breaks for large datasets, implement PDF metadata (title, author, creation date), add support for different paper sizes and orientations
+
+## 5. Create Background Job Processing System [pending]
+### Dependencies: 6.1, 6.2, 6.3, 6.4
+### Description: Implement asynchronous job processing using worker pattern for handling large export operations without blocking API responses
+### Details:
+Implement job queue using channel-based worker pool pattern, create ExportJob struct with jobId, status, progress, error fields, implement worker goroutines for concurrent processing, add job status tracking in Redis with expiration, create temporary file storage manager for export files, implement file cleanup scheduler for old exports, add rate limiting to prevent resource exhaustion, integrate with existing notification system for completion alerts
+
+## 6. Implement Export API Endpoints and History Tracking [pending]
+### Dependencies: 6.5
+### Description: Create REST API endpoints for export operations and implement persistent export history tracking for premium users
+### Details:
+Implement POST /export/checkins endpoint with format selection and filters, create GET /export/status/{jobId} for job status polling, implement GET /export/download/{fileId} with secure file serving, add export_history table with user_id, format, file_path, created_at, expires_at columns, implement premium user validation middleware, add rate limiting per user tier, create export history cleanup job, implement signed URLs for secure file downloads with expiration
+

@@ -1,0 +1,55 @@
+# Task ID: 13
+# Title: Implement Security Hardening
+# Status: done
+# Dependencies: None
+# Priority: high
+# Description: Add comprehensive security measures including input validation, CSRF protection, and security headers
+# Details:
+Implement input validation using validator/v10 (already imported), add CSRF token generation and validation for state-changing operations, implement security headers middleware (CSP, HSTS, X-Frame-Options), add SQL injection prevention through parameterized queries (verify all queries), implement request signing for API endpoints, add audit logging for sensitive operations, implement account lockout after failed attempts.
+
+# Test Strategy:
+Security scanning with OWASP ZAP, test input validation rules, verify CSRF protection, test SQL injection attempts, audit log verification
+
+# Subtasks:
+## 1. Implement comprehensive input validation layer [done]
+### Dependencies: None
+### Description: Create a validation middleware using validator/v10 for all API endpoints to sanitize and validate incoming data
+### Details:
+Build validation middleware that uses validator/v10 package (already imported) to validate all incoming request data. Create validation schemas for each endpoint including user registration, login, checkin creation/update, and profile updates. Implement custom validators for email, username, password strength, and checkin content. Add validation error formatting for consistent API responses.
+
+## 2. Add CSRF protection middleware and token generation [done]
+### Dependencies: None
+### Description: Implement CSRF token generation and validation for all state-changing operations to prevent cross-site request forgery attacks
+### Details:
+Create CSRF token generation using crypto/rand for secure random tokens. Implement double-submit cookie pattern with SameSite cookie attributes. Add CSRF middleware to validate tokens on POST, PUT, DELETE requests. Exclude safe methods (GET, HEAD, OPTIONS) from validation. Store tokens in Redis with user session association and implement token rotation on sensitive operations.
+
+## 3. Implement security headers middleware [done]
+### Dependencies: None
+### Description: Add comprehensive security headers including CSP, HSTS, X-Frame-Options, and other OWASP recommended headers
+### Details:
+Create middleware to set security headers on all responses: Content-Security-Policy with strict directives, Strict-Transport-Security with includeSubDomains, X-Frame-Options DENY, X-Content-Type-Options nosniff, X-XSS-Protection, Referrer-Policy strict-origin-when-cross-origin. Make CSP configurable for development vs production. Add report-uri for CSP violations monitoring.
+
+## 4. Audit and enhance SQL injection prevention [in-progress]
+### Dependencies: 13.1
+### Description: Review all database queries and ensure proper parameterization to prevent SQL injection attacks
+### Details:
+Audit all existing SQL queries in the codebase to verify use of parameterized queries with database/sql package. Replace any string concatenation in queries with proper parameter placeholders. Create a secure query builder wrapper that enforces parameterization. Document SQL security guidelines for future development. Add query logging for security auditing purposes.
+
+## 5. Implement API request signing for sensitive operations [pending]
+### Dependencies: 13.2
+### Description: Add HMAC-based request signing for critical API endpoints to ensure request integrity and authenticity
+### Details:
+Implement HMAC-SHA256 request signing using crypto/hmac for sensitive endpoints like password changes, account deletion, and admin operations. Include timestamp in signature to prevent replay attacks with 5-minute window. Create signature verification middleware that validates request body integrity. Add nonce tracking in Redis to prevent replay within time window.
+
+## 6. Create comprehensive audit logging system [done]
+### Dependencies: None
+### Description: Implement structured audit logging for all security-sensitive operations with tamper protection
+### Details:
+Build audit logging service that captures: authentication attempts (success/failure), authorization failures, data modifications, admin actions, security events. Use structured JSON logging with correlation IDs. Include user ID, IP address, user agent, timestamp, action performed, and result. Store in separate audit table with write-only permissions. Implement log rotation and archival strategy.
+
+## 7. Implement account lockout and rate limiting [done]
+### Dependencies: 13.6
+### Description: Add progressive account lockout mechanism for failed authentication attempts and implement rate limiting
+### Details:
+Create account lockout service with progressive delays: 3 attempts = 1 min lockout, 5 attempts = 5 min, 10 attempts = 30 min. Track failed attempts in Redis with IP and username. Implement CAPTCHA requirement after 3 failed attempts. Add rate limiting middleware using token bucket algorithm for API endpoints. Configure different limits per endpoint based on sensitivity. Send security alerts on lockout events.
+

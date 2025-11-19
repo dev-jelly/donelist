@@ -1,0 +1,73 @@
+# Task ID: 14
+# Title: 검색 및 필터링 시스템
+# Status: in-progress
+# Dependencies: None
+# Priority: medium
+# Description: 체크인 기록의 전문 검색, 고급 필터링, 정렬 기능 구현
+# Details:
+Elasticsearch 또는 PostgreSQL Full-Text Search 활용. 텍스트, 카테고리, 태그, 날짜 범위 복합 검색. 검색 결과 하이라이팅. 검색 쿼리 저장 및 즐겨찾기. 빠른 필터 UI를 위한 facet 집계. 검색 성능 최적화 및 인덱싱.
+
+# Test Strategy:
+다양한 검색 쿼리 정확도 테스트. 복합 필터 조합 테스트. 검색 성능 벤치마크. 한글 검색 정확도 테스트. 대용량 데이터 검색 속도 테스트.
+
+# Subtasks:
+## 1. 검색 스택 결정: PostgreSQL FTS vs Elasticsearch 비교 및 선택 [in-progress]
+### Dependencies: None
+### Description: 요구사항을 기준으로 두 스택을 비교해 최종 선택을 문서화합니다.
+### Details:
+한국어 형태소 분석, 하이라이트, facet 집계, 운영 복잡도, 확장성, 비용, 팀 역량, 백업·보안·모니터링을 기준으로 PoC를 수행합니다. 동일 데이터셋으로 지연·정확도·인덱싱 처리량을 계량 비교하고 ADR로 결정 근거를 남깁니다.
+
+## 2. 한글 대응 스키마·인덱스·토크나이저 설계 [pending]
+### Dependencies: 14.1
+### Description: 텍스트·카테고리·태그·날짜 필드 기반으로 검색 스키마와 인덱스, 한글 토크나이저 전략을 설계합니다.
+### Details:
+ES 선택 시 nori 토크나이저+동의어+stopwords+normalizer 구성, 필드별 boost 정의. PG 선택 시 pg_trgm+to_tsvector 조합, GIN/GIST 인덱스와 unaccent/lower 정규화 적용. 텍스트, 카테고리, 태그, 생성일 필드 매핑 및 가중치 설계.
+
+## 3. 색인 파이프라인 구현: 초기 적재와 변경 데이터 동기화 [pending]
+### Dependencies: 14.2
+### Description: 대량 초기 색인과 이벤트 기반 변경 동기화로 인덱스 일관성을 보장합니다.
+### Details:
+초기 적재는 Bulk API/배치로 처리하고, 변경은 트리거·로그 기반 CDC 또는 큐를 통해 at-least-once로 전달합니다. 재시도/백오프, 순서 보장, idempotency, 백프레셔, 사후 정합성 검사 및 지표 수집을 포함합니다.
+
+## 4. 검색 쿼리 DSL 설계 및 하이라이팅 구현 [pending]
+### Dependencies: 14.3
+### Description: 다중 필드 검색, 부스팅, 구문/부분 일치, 오탈자 허용과 결과 하이라이팅을 제공합니다.
+### Details:
+API 쿼리 빌더를 정의하고 must/should/filter 조합, 필드별 boost·슬롭·타이브레이커 구성. ES highlight 또는 PG ts_headline을 써서 프리/포스트 태그, 최대 조각 수, 스니펫 길이 등 옵션을 지원합니다.
+
+## 5. Facet 집계 설계 및 API: 카테고리·태그·날짜 히스토그램 [pending]
+### Dependencies: 14.4
+### Description: 빠른 필터 UI를 위한 facet 집계를 설계하고 집계 API를 구현합니다.
+### Details:
+카테고리/태그 term 집계와 날짜 date_histogram(일/주/월)을 제공하고, 선택된 필터를 제외/포함한 교차 집계를 설계합니다. 상위 N, min_doc_count, 누락값 처리, 사전 계산/머티리얼라이즈드 뷰 옵션을 검토합니다.
+
+## 6. 필터·정렬 조합 로직 및 저장/즐겨찾기 쿼리 API [pending]
+### Dependencies: 14.5
+### Description: 텍스트·카테고리·태그·날짜 범위 필터와 정렬을 조합하고 저장/즐겨찾기 기능을 제공합니다.
+### Details:
+정렬은 관련도/최신/오래된 순 등 허용 목록으로 제한하고 파라미터 검증·정규화를 수행합니다. 사용자별 저장 쿼리 CRUD·즐겨찾기 토글, 권한 검증, 공유/내보내기 포맷, 마이그레이션을 포함합니다.
+
+## 7. 캐시 전략·페이지네이션 구현: keyset/seek 및 검색 결과 캐싱 [pending]
+### Dependencies: 14.6
+### Description: 고지연 쿼리를 완화할 캐시와 정확한 페이지네이션 방식을 구현합니다.
+### Details:
+Redis/메모리 캐시 계층, TTL·태그 기반 무효화, ETag/Last-Modified 지원. ES search_after 또는 PG keyset 기반 seek 페이지네이션을 적용해 deep page를 방지하고 근사 total count 전략을 도입합니다.
+
+## 8. 재색인·스키마 변경 전략 수립 및 실행 툴링 [pending]
+### Dependencies: 14.3, 14.7
+### Description: 무중단 재색인·스키마 변경을 위한 전략과 자동화 도구를 제공합니다.
+### Details:
+ES는 버전드 인덱스+alias 스위치, 백필·검증·컷오버 절차를 정의합니다. PG는 CONCURRENTLY 인덱스 생성·증분 백필·롤백 계획을 수립합니다. 작업 스케줄러, 진행률·오류 로깅, 중단 후 재개 기능을 포함합니다.
+
+## 9. 부하·지연 테스트 및 성능 튜닝 [pending]
+### Dependencies: 14.7, 14.8
+### Description: 대표 시나리오로 지연/처리량을 측정하고 병목을 찾아 튜닝합니다.
+### Details:
+대규모 데이터 생성기와 k6/Locust 시나리오를 작성해 동시 사용자·필터 조합·deep page를 포함합니다. 슬로우로그/프로파일 기반으로 쿼리·샤드·세그먼트·메모리 파라미터를 최적화합니다.
+
+## 10. 모니터링·경보 및 대시보드 구축: 정확도·성능·오류 가시화 [pending]
+### Dependencies: 14.9
+### Description: 핵심 지표와 로그·트레이싱을 수집해 대시보드와 경보를 구성합니다.
+### Details:
+QPS, 오류율, 검색 지연, 무결과율, 인덱스 지연, 색인 실패, 캐시 적중률, 재색인 진행률 등 메트릭을 노출하고 Grafana/Alertmanager 등과 연동합니다. SLO·런북을 정의하고 온콜 대응 흐름을 마련합니다.
+

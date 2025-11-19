@@ -1,0 +1,158 @@
+# Task ID: 20
+# Title: Design and Implement Separate UI/UX for Personal vs Team Modes
+# Status: in-progress
+# Dependencies: 1, 2
+# Priority: medium
+# Description: Create completely different user interfaces and routing structures for personal productivity tracking versus team collaboration modes, including mode selection mechanism and mode-specific components.
+# Details:
+Implement comprehensive dual-mode UI/UX system with the following components:
+
+1. **Mode Detection & Selection System** (internal/mode/service.go):
+   - Create UserMode enum (personal, team) with default preference storage in users table
+   - Implement mode detection middleware that sets context based on user preference or URL prefix (/personal, /team)
+   - Build mode switching API endpoint POST /api/v1/users/mode with validation
+   - Add mode field to JWT claims for stateless mode detection
+
+2. **Routing Architecture** (internal/api/routes/routes.go):
+   - Implement route prefixing: /api/v1/personal/* and /api/v1/team/* with shared middleware
+   - Create mode-aware middleware that validates access (team features require collaboration permissions)
+   - Duplicate critical endpoints with mode-specific behavior (checkins, analytics, timelines)
+   - Implement cross-mode data sharing controls (personal checkins visible in team mode based on privacy settings)
+
+3. **Personal Mode Features** (internal/personal/*):
+   - Minimal UI components focused on individual productivity tracking
+   - Personal dashboard with streak tracking, personal goals, private categories
+   - Individual timeline views (daily/weekly personal summaries)
+   - Personal analytics without team comparison features
+   - Quick checkin flows optimized for single-user experience
+
+4. **Team Mode Features** (internal/team/*):
+   - Team dashboard with real-time collaboration using existing WebSocket infrastructure
+   - Shared timelines showing team member activities with privacy controls
+   - Team analytics with member comparison, team goals, shared categories
+   - Real-time presence indicators and typing notifications via WebSocket
+   - Team member management (invite, remove, role assignment)
+
+5. **Database Schema Extensions**:
+   - Add user_mode_preference enum to users table with default 'personal'
+   - Create teams table with team_id, name, settings, created_at
+   - Create team_members table with team_id, user_id, role, joined_at
+   - Add team_id foreign key to checkins table for team-shared checkins
+   - Create team_categories table for shared category management
+
+6. **Mode-Specific Components**:
+   - Personal: MinimalCheckinForm, PersonalDashboard, StreakDisplay, PersonalTimeline
+   - Team: TeamDashboard, CollaborativeCheckinForm, TeamMemberList, SharedTimeline, RealTimeActivityFeed
+   - Shared: ModeSelector, UserPreferences, CommonHeader with mode indicator
+
+7. **User Experience Enhancements**:
+   - Smooth mode transition animations with data context preservation
+   - Mode-specific navigation patterns (sidebar for team, bottom nav for personal)
+   - Different color schemes and layouts per mode
+   - Mode-aware notifications and real-time updates
+   - Export functionality with mode-specific data filtering
+
+# Test Strategy:
+Comprehensive testing approach including:
+
+1. **Unit Tests**:
+   - Test mode detection middleware with various user preferences and URL patterns
+   - Verify mode-specific API endpoint behavior and data filtering
+   - Test mode switching functionality and JWT claim updates
+   - Validate team permission checks and access controls
+
+2. **Integration Tests**:
+   - Test complete user flows for both personal and team modes
+   - Verify WebSocket functionality works correctly in team mode
+   - Test data isolation between personal and team contexts
+   - Validate mode-specific component rendering and behavior
+
+3. **E2E Testing**:
+   - Test user journey from registration through mode selection to feature usage
+   - Verify smooth transitions between modes with data preservation
+   - Test collaborative features in team mode with multiple concurrent users
+   - Validate responsive design across different screen sizes for both modes
+
+4. **Performance Testing**:
+   - Load test team mode with multiple concurrent users and real-time updates
+   - Benchmark mode detection middleware overhead
+   - Test WebSocket performance with large team sizes
+   - Verify database query performance with mode-specific data filtering
+
+5. **User Experience Testing**:
+   - A/B test mode selection onboarding flow
+   - Validate accessibility compliance for both UI modes
+   - Test keyboard navigation and screen reader compatibility
+   - Verify consistent branding and visual hierarchy across modes
+
+# Subtasks:
+## 5. Create personal mode UI components and handlers [pending]
+### Dependencies: 20.4
+### Description: Implement personal mode specific handlers and components focused on individual productivity tracking
+### Details:
+Create internal/personal/ package with PersonalDashboard handler, personal analytics endpoints, individual timeline views, and streak tracking. Extend existing checkin/timeline handlers with mode-aware filtering. Implement personal-only features like private categories and personal goals without team visibility.
+
+## 6. Implement team mode features with real-time collaboration [pending]
+### Dependencies: 20.4
+### Description: Build team mode handlers with shared timelines, team analytics, and real-time collaboration using existing WebSocket infrastructure
+### Details:
+Create internal/team/ package with TeamDashboard handler, team member management, shared timeline views, and team analytics with member comparisons. Integrate with existing WebSocket infrastructure in internal/websocket/ for real-time presence indicators and typing notifications. Implement team-specific checkin sharing and collaborative features.
+
+## 1. Create mode-specific database schema extensions [done]
+### Dependencies: None
+### Description: Add user_mode_preference column to users table and create team-related tables (teams, team_members, team_categories)
+### Details:
+Create new migration file 000006_team_mode_schema.up.sql to add: user_mode_preference enum('personal','team') DEFAULT 'personal' to users table, teams table (id, name, settings, created_at), team_members table (team_id, user_id, role, joined_at), and team_categories table. Update user repository to handle mode preference field.
+
+## 2. Implement mode detection service and middleware [done]
+### Dependencies: 20.1
+### Description: Create mode detection middleware that determines user mode from preferences or URL prefixes (/personal, /team)
+### Details:
+Create internal/mode/service.go with mode detection logic based on existing internal/mode/types.go. Implement middleware in internal/api/middleware/mode.go that reads user preferences from database or detects from URL prefixes. Add mode context to request context for downstream handlers to access.
+<info added on 2025-11-12T11:21:14.120Z>
+I'll use the available tools to analyze the project structure and context before generating the subtask update text.After analyzing the codebase, I'll generate the subtask update text:
+
+Implemented comprehensive mode detection system across multiple components. Created internal/mode package with:
+
+1. mode/types.go: Enum and utility methods for Mode (Personal/Team), with IsValid() and DefaultMode() functions
+2. mode/service.go: Mode service with SwitchMode(), ValidateModeAccess(), and context extraction methods including GetModeFromContext(), GetTeamIDFromContext()
+3. mode/middleware.go: Gin middleware for mode detection supporting:
+   - URL prefix detection (/api/v1/personal, /api/v1/team, /personal, /team)
+   - Query parameter mode detection (?mode=personal, ?mode=team)
+   - X-Mode header detection
+   - Automatic team context extraction with TeamContextMiddleware
+   - Mode requirement middleware (RequireMode, RequireTeamMode, RequirePersonalMode)
+
+Added team/models.go with Team, TeamMember, and MemberRole structs, implementing role-based access control helpers like CanManageMembers(), CanEditTeamSettings(), and CanViewAllCheckins().
+</info added on 2025-11-12T11:21:14.120Z>
+
+## 3. Build mode switching API endpoint [done]
+### Dependencies: 20.1, 20.2
+### Description: Create POST /api/v1/users/mode endpoint to allow users to switch between personal and team modes
+### Details:
+Add mode switching endpoint to user handler in internal/api/handlers/user_handler.go. Update user service to handle mode preference updates. Include validation to ensure team mode requires proper team membership. Update JWT claims to include mode information for stateless detection.
+<info added on 2025-11-12T12:50:18.755Z>
+I'll analyze the context and generate the update based on the implementation details.
+
+Analysis via Glob and Grep:Great! I'll generate the subtask update focused on the mode switching implementation details:
+
+Completed full implementation of mode switching API with comprehensive team and mode management features. Created three critical files to support the mode switching functionality:
+
+1. internal/team/repository.go: Implements full CRUD operations for teams and team members, including granular methods for team and membership management
+2. internal/team/service.go: Provides business logic with robust permission validation, ensuring secure team operations and mode transitions
+3. internal/api/handlers/mode_handler.go: Implements REST endpoints for mode management:
+   - POST /api/v1/users/mode: Allows switching between personal and team modes
+   - GET /api/v1/users/mode: Retrieves current user mode
+   - GET /api/v1/users/available-teams: Lists teams accessible to the user
+
+Updated user.User struct to include ModePreference field, enabling seamless mode tracking. Added UpdateModePreference repository method to support dynamic mode changes. Implemented strict validation to ensure team mode can only be selected when user has valid team membership.
+
+Achieved a complete, secure implementation of mode switching with comprehensive validation, repository support, and flexible API endpoints that support both personal and team collaboration workflows.
+</info added on 2025-11-12T12:50:18.755Z>
+
+## 4. Implement dual routing architecture with mode prefixes [done]
+### Dependencies: 20.2, 20.3
+### Description: Extend existing route structure to support /api/v1/personal/* and /api/v1/team/* prefixes with mode-aware middleware
+### Details:
+Modify internal/api/routes/routes.go to create personal and team route groups. Duplicate critical endpoints (checkins, analytics, timelines) with mode-specific behavior. Add mode validation middleware to team routes requiring collaboration permissions. Maintain backward compatibility for existing routes.
+

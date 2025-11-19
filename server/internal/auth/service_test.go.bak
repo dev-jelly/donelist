@@ -1,0 +1,312 @@
+package auth
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/dev-jelly/donelist/internal/testutil"
+	"github.com/dev-jelly/donelist/internal/user"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
+	_ "github.com/lib/pq" // PostgreSQL driver
+)
+
+func setupAuthServiceTest(t *testing.T) (*Service, *testutil.TestDB) {
+	testDB := testutil.SetupTestDB(t)
+
+	userRepo := user.NewRepository(testDB.DB)
+	refreshTokenRepo := NewRefreshTokenRepository(testDB.DB)
+
+	config := JWTConfig{
+		SigningMethod:      SigningMethodHS256,
+		Secret:             "test-secret-key-for-testing-only",
+		AccessExpiry:       15 * time.Minute,
+		RefreshExpiry:      7 * 24 * time.Hour,
+		ClockSkewTolerance: 30 * time.Second,
+	}
+
+	jwtManager, err := NewJWTManager(config)
+	require.NoError(t, err)
+
+	logger := zap.NewNop()
+
+	service := NewService(userRepo, refreshTokenRepo, jwtManager, logger)
+
+	return service, testDB
+}
+
+func TestAuthService_Register(t *testing.T) {
+	service, testDB := setupAuthServiceTest(t)
+	defer testDB.TearDown(t)
+	ctx := context.Background()
+
+	t.Run("Register new user successfully", func(t *testing.T) {
+		input := RegisterInput{
+			Email:    "newuser@example.com",
+			Username: "newuser",
+			Password: "SecurePassword123!",
+		}
+
+		user, tokens, err := service.Register(ctx, input)
+		require.NoError(t, err)
+		assert.NotNil(t, user)
+		assert.NotNil(t, tokens)
+		assert.Equal(t, input.Email, user.Email)
+		assert.Equal(t, input.Username, user.Username)
+		assert.NotEmpty(t, tokens.AccessToken)
+		assert.NotEmpty(t, tokens.RefreshToken)
+
+		// Verify password was hashed
+		assert.NotEqual(t, input.Password, user.PasswordHash)
+		err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(input.Password))
+		assert.NoError(t, err)
+	})
+
+	t.Run("Fail with duplicate email", func(t *testing.T) {
+		input := RegisterInput{
+			Email:    "duplicate@example.com",
+			Username: "user1",
+			Password: "Password123!",
+		}
+
+		// First registration
+		_, _, err := service.Register(ctx, input)
+		require.NoError(t, err)
+
+		// Second registration with same email
+		input.Username = "user2"
+		user, tokens, err := service.Register(ctx, input)
+		assert.Error(t, err)
+		assert.Nil(t, user)
+		assert.Nil(t, tokens)
+		assert.Contains(t, err.Error(), "already exists")
+	})
+
+	t.Run("Fail with weak password", func(t *testing.T) {
+		input := RegisterInput{
+			Email:    "weak@example.com",
+			Username: "weakpass",
+			Password: "123", // Too short
+		}
+
+		user, tokens, err := service.Register(ctx, input)
+		assert.Error(t, err)
+		assert.Nil(t, user)
+		assert.Nil(t, tokens)
+		assert.Contains(t, err.Error(), "password")
+	})
+}
+
+func TestAuthService_Login(t *testing.T) {
+	service, testDB := setupAuthServiceTest(t)
+	defer testDB.TearDown(t)
+	ctx := context.Background()
+	fixtures := testutil.NewFixtures(testDB)
+
+	// Create test user
+	testPassword := "TestPassword123!"
+	testUser := fixtures.CreateTestUser(t, "login@example.com", testPassword)
+
+	t.Run("Login with correct credentials", func(t *testing.T) {
+		input := LoginInput{
+			Email:    testUser.Email,
+			Password: testPassword,
+		}
+
+		user, tokens, err := service.Login(ctx, input)
+		require.NoError(t, err)
+		assert.NotNil(t, user)
+		assert.NotNil(t, tokens)
+		assert.Equal(t, testUser.ID, user.ID)
+		assert.NotEmpty(t, tokens.AccessToken)
+		assert.NotEmpty(t, tokens.RefreshToken)
+
+		// Verify last login was updated
+		assert.NotNil(t, user.LastLoginAt)
+	})
+
+	t.Run("Fail with incorrect password", func(t *testing.T) {
+		input := LoginInput{
+			Email:    testUser.Email,
+			Password: "WrongPassword123!",
+		}
+
+		user, tokens, err := service.Login(ctx, input)
+		assert.Error(t, err)
+		assert.Nil(t, user)
+		assert.Nil(t, tokens)
+		assert.Contains(t, err.Error(), "invalid")
+	})
+
+	t.Run("Fail with non-existent email", func(t *testing.T) {
+		input := LoginInput{
+			Email:    "nonexistent@example.com",
+			Password: testPassword,
+		}
+
+		user, tokens, err := service.Login(ctx, input)
+		assert.Error(t, err)
+		assert.Nil(t, user)
+		assert.Nil(t, tokens)
+	})
+}
+
+func TestAuthService_RefreshTokens(t *testing.T) {
+	service, testDB := setupAuthServiceTest(t)
+	defer testDB.TearDown(t)
+	ctx := context.Background()
+	fixtures := testutil.NewFixtures(testDB)
+
+	// Create test user and login to get tokens
+	testUser := fixtures.CreateTestUser(t, "refresh@example.com", "Password123!")
+	_, tokens, err := service.Login(ctx, LoginInput{
+		Email:    testUser.Email,
+		Password: "Password123!",
+	})
+	require.NoError(t, err)
+
+	t.Run("Refresh tokens successfully", func(t *testing.T) {
+		time.Sleep(100 * time.Millisecond) // Ensure different token
+
+		newTokens, err := service.RefreshTokens(ctx, tokens.RefreshToken)
+		require.NoError(t, err)
+		assert.NotNil(t, newTokens)
+		assert.NotEmpty(t, newTokens.AccessToken)
+		assert.NotEmpty(t, newTokens.RefreshToken)
+
+		// New tokens should be different
+		assert.NotEqual(t, tokens.AccessToken, newTokens.AccessToken)
+		assert.NotEqual(t, tokens.RefreshToken, newTokens.RefreshToken)
+
+		// Old refresh token should be invalidated
+		_, err = service.RefreshTokens(ctx, tokens.RefreshToken)
+		assert.Error(t, err)
+	})
+
+	t.Run("Fail with invalid token", func(t *testing.T) {
+		newTokens, err := service.RefreshTokens(ctx, "invalid-token")
+		assert.Error(t, err)
+		assert.Nil(t, newTokens)
+	})
+
+	t.Run("Fail with revoked token", func(t *testing.T) {
+		// Login again to get new tokens
+		_, newTokens, err := service.Login(ctx, LoginInput{
+			Email:    testUser.Email,
+			Password: "Password123!",
+		})
+		require.NoError(t, err)
+
+		// Logout to revoke the token
+		err = service.Logout(ctx, testUser.ID, newTokens.RefreshToken)
+		require.NoError(t, err)
+
+		// Try to refresh with revoked token
+		refreshedTokens, err := service.RefreshTokens(ctx, newTokens.RefreshToken)
+		assert.Error(t, err)
+		assert.Nil(t, refreshedTokens)
+	})
+}
+
+func TestAuthService_Logout(t *testing.T) {
+	service, testDB := setupAuthServiceTest(t)
+	defer testDB.TearDown(t)
+	ctx := context.Background()
+	fixtures := testutil.NewFixtures(testDB)
+
+	// Create test user and login
+	testUser := fixtures.CreateTestUser(t, "logout@example.com", "Password123!")
+	_, tokens, err := service.Login(ctx, LoginInput{
+		Email:    testUser.Email,
+		Password: "Password123!",
+	})
+	require.NoError(t, err)
+
+	t.Run("Logout successfully", func(t *testing.T) {
+		err := service.Logout(ctx, testUser.ID, tokens.RefreshToken)
+		require.NoError(t, err)
+
+		// Token should be revoked
+		_, err = service.RefreshTokens(ctx, tokens.RefreshToken)
+		assert.Error(t, err)
+	})
+
+	t.Run("Handle logout with non-existent token", func(t *testing.T) {
+		err := service.Logout(ctx, testUser.ID, "non-existent-token")
+		// Should not error (idempotent)
+		assert.NoError(t, err)
+	})
+}
+
+func TestAuthService_LogoutAll(t *testing.T) {
+	service, testDB := setupAuthServiceTest(t)
+	defer testDB.TearDown(t)
+	ctx := context.Background()
+	fixtures := testutil.NewFixtures(testDB)
+
+	// Create test user
+	testUser := fixtures.CreateTestUser(t, "logoutall@example.com", "Password123!")
+
+	// Create multiple sessions (login multiple times)
+	var refreshTokens []string
+	for i := 0; i < 3; i++ {
+		_, tokens, err := service.Login(ctx, LoginInput{
+			Email:    testUser.Email,
+			Password: "Password123!",
+		})
+		require.NoError(t, err)
+		refreshTokens = append(refreshTokens, tokens.RefreshToken)
+	}
+
+	t.Run("Logout all sessions successfully", func(t *testing.T) {
+		err := service.LogoutAll(ctx, testUser.ID)
+		require.NoError(t, err)
+
+		// All refresh tokens should be revoked
+		for _, token := range refreshTokens {
+			_, err := service.RefreshTokens(ctx, token)
+			assert.Error(t, err)
+		}
+	})
+}
+
+func TestAuthService_ValidateToken(t *testing.T) {
+	service, testDB := setupAuthServiceTest(t)
+	defer testDB.TearDown(t)
+	ctx := context.Background()
+	fixtures := testutil.NewFixtures(testDB)
+
+	// Create test user and login
+	testUser := fixtures.CreateTestUser(t, "validate@example.com", "Password123!")
+	_, tokens, err := service.Login(ctx, LoginInput{
+		Email:    testUser.Email,
+		Password: "Password123!",
+	})
+	require.NoError(t, err)
+
+	t.Run("Validate valid access token", func(t *testing.T) {
+		claims, err := service.ValidateToken(tokens.AccessToken)
+		require.NoError(t, err)
+		assert.NotNil(t, claims)
+		assert.Equal(t, testUser.ID, claims.UserID)
+		assert.Equal(t, "access", claims.TokenType)
+	})
+
+	t.Run("Fail with invalid token", func(t *testing.T) {
+		claims, err := service.ValidateToken("invalid.token.here")
+		assert.Error(t, err)
+		assert.Nil(t, claims)
+	})
+
+	t.Run("Fail with wrong token type", func(t *testing.T) {
+		// Refresh token should not be valid as access token
+		claims, err := service.ValidateToken(tokens.RefreshToken)
+		if err == nil && claims != nil {
+			assert.NotEqual(t, "access", claims.TokenType)
+		}
+	})
+}

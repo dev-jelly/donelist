@@ -1,0 +1,61 @@
+# Task ID: 9
+# Title: Create Notification System
+# Status: pending
+# Dependencies: 3, 7
+# Priority: medium
+# Description: Build in-app and external notification system for user engagement
+# Details:
+Create notifications table with type, recipient, payload, read_at fields. Implement notification service supporting: In-app notifications via WebSocket, Email notifications (initially SMTP, later SendGrid), Push notifications preparation (FCM tokens storage), Notification preferences per user, Batch notification processing. Types: daily summary, achievement unlocked, subscription expiring.
+
+# Test Strategy:
+Test notification delivery, verify preference filtering, test batching logic, WebSocket notification tests, email delivery tests
+
+# Subtasks:
+## 1. Create notification database schema and models [pending]
+### Dependencies: None
+### Description: Design and implement the notifications table with all required fields and create corresponding Go models and repository interfaces
+### Details:
+Create notifications table with fields: id, user_id, type (enum), title, message, payload (JSONB), read_at, created_at, updated_at. Add indexes on user_id and created_at. Create Go structs for Notification model with proper JSON tags and validation. Implement repository interface with methods: Create, GetByUserID, MarkAsRead, GetUnreadCount, BatchCreate
+
+## 2. Build core notification service layer [pending]
+### Dependencies: 9.1
+### Description: Implement the main notification service that orchestrates different notification channels and handles business logic
+### Details:
+Create NotificationService with methods: SendNotification, SendBatchNotifications, GetUserNotifications. Implement notification builder pattern for constructing notifications. Add support for notification types: daily_summary, achievement_unlocked, subscription_expiring, checkin_reminder. Include notification metadata handling and priority levels. Integrate with existing user service for recipient validation
+
+## 3. Implement WebSocket infrastructure for real-time notifications [pending]
+### Dependencies: 9.2
+### Description: Set up WebSocket connections using gorilla/websocket for delivering in-app notifications in real-time to connected clients
+### Details:
+Implement WebSocket hub to manage client connections using gorilla/websocket. Create connection pool with heartbeat/ping-pong mechanism. Build message broadcasting system with room-based isolation per user. Add reconnection logic with exponential backoff on client side. Implement JWT-based WebSocket authentication. Create /ws endpoint for WebSocket connections
+
+## 4. Create email notification service with SMTP [pending]
+### Dependencies: 9.2
+### Description: Build email delivery system using SMTP with support for HTML templates and queuing mechanism
+### Details:
+Implement EmailNotificationChannel using net/smtp or gomail library. Create HTML email templates for each notification type using html/template. Add email queuing mechanism with rate limiting to prevent spam. Implement retry logic with exponential backoff for failed deliveries. Store email send history in database. Configure SMTP settings from environment variables with fallback defaults
+
+## 5. Build notification preferences management system [pending]
+### Dependencies: 9.1
+### Description: Create user preference system allowing users to control which notifications they receive through which channels
+### Details:
+Create notification_preferences table with user_id, notification_type, channel (in_app, email, push), enabled fields. Build PreferencesService with methods: GetUserPreferences, UpdatePreferences, GetDefaultPreferences. Add API endpoints: GET/PUT /users/{id}/notification-preferences. Implement preference inheritance with defaults. Add unsubscribe token generation for email notifications
+
+## 6. Implement batch notification processing system [pending]
+### Dependencies: 9.2, 9.4, 9.5
+### Description: Create asynchronous batch processing for notifications to handle high volumes and scheduled digests efficiently
+### Details:
+Implement batch processor using worker pool pattern with configurable concurrency. Create daily digest aggregator that collects and summarizes notifications. Add scheduled job using cron for daily summary generation at user-preferred time. Implement batching logic to group notifications by user and type. Add circuit breaker pattern for handling downstream service failures. Store batch job status and history
+
+## 7. Add push notification token management [pending]
+### Dependencies: 9.1
+### Description: Implement storage and management of FCM tokens for future push notification support
+### Details:
+Create device_tokens table with user_id, token, platform (ios/android), device_id, active, created_at fields. Build DeviceTokenService with RegisterToken, RemoveToken, GetUserTokens methods. Add endpoints: POST /devices/register, DELETE /devices/{deviceId}. Implement token validation and duplicate prevention. Add token refresh mechanism for expired tokens. Prepare FCM integration interface for future implementation
+
+## 8. Create comprehensive notification system tests [pending]
+### Dependencies: 9.3, 9.4, 9.6, 9.7
+### Description: Build full test coverage including unit tests, integration tests, and end-to-end notification flow testing
+### Details:
+Write unit tests achieving 85%+ coverage for all notification services. Create integration tests using testcontainers for database and Redis. Build end-to-end tests for complete notification flows from trigger to delivery. Add load tests simulating 1000+ concurrent notifications. Implement WebSocket client for automated testing. Create test fixtures and factories for notification data. Add monitoring and alerting for notification delivery metrics
+
