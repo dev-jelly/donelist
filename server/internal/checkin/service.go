@@ -15,14 +15,38 @@ import (
 	"go.uber.org/zap"
 )
 
+// SearchEventHandler handles search indexing events
+type SearchEventHandler interface {
+	OnCheckinCreated(ctx context.Context, checkinID, userID uuid.UUID, data map[string]interface{}) error
+	OnCheckinUpdated(ctx context.Context, checkinID, userID uuid.UUID, data map[string]interface{}) error
+	OnCheckinDeleted(ctx context.Context, checkinID, userID uuid.UUID) error
+}
+
+// NoOpSearchEventHandler is a no-op implementation
+type NoOpSearchEventHandler struct{}
+
+func (n *NoOpSearchEventHandler) OnCheckinCreated(ctx context.Context, checkinID, userID uuid.UUID, data map[string]interface{}) error {
+	return nil
+}
+
+func (n *NoOpSearchEventHandler) OnCheckinUpdated(ctx context.Context, checkinID, userID uuid.UUID, data map[string]interface{}) error {
+	return nil
+}
+
+func (n *NoOpSearchEventHandler) OnCheckinDeleted(ctx context.Context, checkinID, userID uuid.UUID) error {
+	return nil
+}
+
 // Service handles check-in business logic
 type Service struct {
-	checkinRepo  *Repository
-	categoryRepo *category.Repository
-	tagRepo      *tag.Repository
-	userRepo     *user.Repository
-	hub          *websocket.Hub
-	logger       *zap.Logger
+	checkinRepo      *Repository
+	categoryRepo     *category.Repository
+	tagRepo          *tag.Repository
+	userRepo         *user.Repository
+	hub              *websocket.Hub
+	cacheInvalidator CacheInvalidator
+	searchHandler    SearchEventHandler
+	logger           *zap.Logger
 }
 
 // NewService creates a new check-in service
@@ -35,12 +59,28 @@ func NewService(
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
-		checkinRepo:  checkinRepo,
-		categoryRepo: categoryRepo,
-		tagRepo:      tagRepo,
-		userRepo:     userRepo,
-		hub:          hub,
-		logger:       logger,
+		checkinRepo:      checkinRepo,
+		categoryRepo:     categoryRepo,
+		tagRepo:          tagRepo,
+		userRepo:         userRepo,
+		hub:              hub,
+		cacheInvalidator: &NoOpCacheInvalidator{}, // Default to no-op
+		searchHandler:    &NoOpSearchEventHandler{}, // Default to no-op
+		logger:           logger,
+	}
+}
+
+// SetCacheInvalidator sets the cache invalidator for this service
+func (s *Service) SetCacheInvalidator(invalidator CacheInvalidator) {
+	if invalidator != nil {
+		s.cacheInvalidator = invalidator
+	}
+}
+
+// SetSearchEventHandler sets the search event handler for this service
+func (s *Service) SetSearchEventHandler(handler SearchEventHandler) {
+	if handler != nil {
+		s.searchHandler = handler
 	}
 }
 
@@ -171,6 +211,40 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (*Checkin, erro
 		zap.String("checkin_id", checkin.ID.String()),
 		zap.String("user_id", input.UserID.String()),
 	)
+
+	// Invalidate timeline cache for this user and date
+	if s.cacheInvalidator != nil {
+		dateStr := checkin.CheckinTime.Format("2006-01-02")
+		if err := s.cacheInvalidator.InvalidateDateCache(ctx, input.UserID, dateStr); err != nil {
+			s.logger.Warn("Failed to invalidate timeline cache",
+				zap.String("user_id", input.UserID.String()),
+				zap.String("date", dateStr),
+				zap.Error(err))
+			// Don't fail the request if cache invalidation fails
+		}
+	}
+
+	// Trigger search indexing
+	if s.searchHandler != nil {
+		searchData := map[string]interface{}{
+			"id":               checkin.ID,
+			"user_id":          checkin.UserID,
+			"category_id":      checkin.CategoryID,
+			"content":          checkin.Content,
+			"checkin_time":     checkin.CheckinTime,
+			"duration_minutes": checkin.DurationMinutes,
+			"is_edited":        checkin.IsEdited,
+			"edit_count":       checkin.EditCount,
+			"created_at":       checkin.CreatedAt,
+			"updated_at":       checkin.UpdatedAt,
+		}
+		if err := s.searchHandler.OnCheckinCreated(ctx, checkin.ID, checkin.UserID, searchData); err != nil {
+			s.logger.Warn("Failed to trigger search indexing",
+				zap.String("checkin_id", checkin.ID.String()),
+				zap.Error(err))
+			// Don't fail the request if indexing fails
+		}
+	}
 
 	// Broadcast WebSocket event
 	if s.hub != nil {
@@ -318,6 +392,40 @@ func (s *Service) Update(ctx context.Context, id, userID uuid.UUID, input Update
 		zap.String("user_id", userID.String()),
 	)
 
+	// Invalidate timeline cache for this user and date
+	if s.cacheInvalidator != nil {
+		dateStr := updated.CheckinTime.Format("2006-01-02")
+		if err := s.cacheInvalidator.InvalidateDateCache(ctx, userID, dateStr); err != nil {
+			s.logger.Warn("Failed to invalidate timeline cache",
+				zap.String("user_id", userID.String()),
+				zap.String("date", dateStr),
+				zap.Error(err))
+			// Don't fail the request if cache invalidation fails
+		}
+	}
+
+	// Trigger search indexing
+	if s.searchHandler != nil {
+		searchData := map[string]interface{}{
+			"id":               updated.ID,
+			"user_id":          updated.UserID,
+			"category_id":      updated.CategoryID,
+			"content":          updated.Content,
+			"checkin_time":     updated.CheckinTime,
+			"duration_minutes": updated.DurationMinutes,
+			"is_edited":        updated.IsEdited,
+			"edit_count":       updated.EditCount,
+			"created_at":       updated.CreatedAt,
+			"updated_at":       updated.UpdatedAt,
+		}
+		if err := s.searchHandler.OnCheckinUpdated(ctx, updated.ID, updated.UserID, searchData); err != nil {
+			s.logger.Warn("Failed to trigger search indexing",
+				zap.String("checkin_id", updated.ID.String()),
+				zap.Error(err))
+			// Don't fail the request if indexing fails
+		}
+	}
+
 	// Broadcast WebSocket event
 	if s.hub != nil {
 		msg := websocket.NewMessage(websocket.MessageTypeCheckinUpdated, websocket.CheckinEventData{
@@ -336,6 +444,13 @@ func (s *Service) Update(ctx context.Context, id, userID uuid.UUID, input Update
 
 // Delete deletes a check-in
 func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID) error {
+	// Get the check-in first to know which date to invalidate
+	checkin, err := s.checkinRepo.GetByID(ctx, id, userID)
+	if err != nil {
+		s.logger.Error("Failed to get check-in for deletion", zap.Error(err))
+		return fmt.Errorf("failed to delete check-in")
+	}
+
 	if err := s.checkinRepo.Delete(ctx, id, userID); err != nil {
 		s.logger.Error("Failed to delete check-in", zap.Error(err))
 		return fmt.Errorf("failed to delete check-in")
@@ -345,6 +460,28 @@ func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID) error {
 		zap.String("checkin_id", id.String()),
 		zap.String("user_id", userID.String()),
 	)
+
+	// Invalidate timeline cache for this user and date
+	if s.cacheInvalidator != nil && checkin != nil {
+		dateStr := checkin.CheckinTime.Format("2006-01-02")
+		if err := s.cacheInvalidator.InvalidateDateCache(ctx, userID, dateStr); err != nil {
+			s.logger.Warn("Failed to invalidate timeline cache",
+				zap.String("user_id", userID.String()),
+				zap.String("date", dateStr),
+				zap.Error(err))
+			// Don't fail the request if cache invalidation fails
+		}
+	}
+
+	// Trigger search indexing
+	if s.searchHandler != nil {
+		if err := s.searchHandler.OnCheckinDeleted(ctx, id, userID); err != nil {
+			s.logger.Warn("Failed to trigger search indexing",
+				zap.String("checkin_id", id.String()),
+				zap.Error(err))
+			// Don't fail the request if indexing fails
+		}
+	}
 
 	// Broadcast WebSocket event
 	if s.hub != nil {

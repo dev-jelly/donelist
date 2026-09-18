@@ -1,0 +1,173 @@
+# Health Probe Configuration Examples for Donelist API
+# Add these probe configurations to your deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: donelist-api
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: donelist-api
+  template:
+    metadata:
+      labels:
+        app: donelist-api
+    spec:
+      containers:
+      - name: api
+        image: donelist/api:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+
+        # Liveness Probe - Determines if the pod should be restarted
+        # If this fails 3 times, Kubernetes will restart the pod
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 10    # Wait 10s after container start
+          periodSeconds: 10           # Check every 10 seconds
+          timeoutSeconds: 5           # Wait 5s for response
+          successThreshold: 1         # 1 success = healthy
+          failureThreshold: 3         # 3 failures = restart pod
+
+        # Readiness Probe - Determines if the pod should receive traffic
+        # If this fails, pod is removed from service endpoints (no traffic)
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5      # Start checking after 5s
+          periodSeconds: 5            # Check every 5 seconds
+          timeoutSeconds: 3           # Wait 3s for response
+          successThreshold: 1         # 1 success = ready
+          failureThreshold: 2         # 2 failures = remove from service
+
+        # Startup Probe - Gives slow-starting containers more time
+        # Disables liveness/readiness checks until this succeeds
+        # Optional - use for apps with slow startup
+        startupProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 0      # Start checking immediately
+          periodSeconds: 5            # Check every 5 seconds
+          timeoutSeconds: 3           # Wait 3s for response
+          successThreshold: 1         # 1 success = started
+          failureThreshold: 30        # Allow up to 150s for startup (30 * 5s)
+
+        # Resource limits
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+        # Environment variables
+        env:
+        - name: PORT
+          value: "8080"
+        - name: APP_ENV
+          value: "production"
+        - name: DATABASE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: donelist-secrets
+              key: db-host
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: donelist-secrets
+              key: db-password
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: donelist-secrets
+              key: redis-host
+
+---
+# Service definition
+apiVersion: v1
+kind: Service
+metadata:
+  name: donelist-api
+  namespace: default
+  labels:
+    app: donelist-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: donelist-api
+
+---
+# HorizontalPodAutoscaler (optional)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: donelist-api-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: donelist-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 15
+      selectPolicy: Max
+
+---
+# PodDisruptionBudget - Ensure availability during updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: donelist-api-pdb
+  namespace: default
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: donelist-api

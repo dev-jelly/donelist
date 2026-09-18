@@ -1,0 +1,192 @@
+# Cert-Manager Configuration for Automatic TLS Certificate Management
+#
+# Prerequisites:
+# Install cert-manager:
+# kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+
+---
+# ClusterIssuer for Let's Encrypt Production
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app: cert-manager
+spec:
+  acme:
+    # Let's Encrypt production server
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@donelist.example.com  # CHANGE THIS to your email
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    # HTTP-01 challenge (default)
+    - http01:
+        ingress:
+          class: nginx
+    # DNS-01 challenge (alternative, better for wildcard certs)
+    # - dns01:
+    #     cloudflare:
+    #       email: admin@donelist.example.com
+    #       apiTokenSecretRef:
+    #         name: cloudflare-api-token
+    #         key: api-token
+
+---
+# ClusterIssuer for Let's Encrypt Staging (for testing)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app: cert-manager
+spec:
+  acme:
+    # Let's Encrypt staging server (for testing)
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@donelist.example.com  # CHANGE THIS to your email
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+# Certificate for Donelist API (alternative to annotation-based)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: donelist-api-cert
+  namespace: donelist
+  labels:
+    app: donelist
+spec:
+  secretName: donelist-api-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - api.donelist.example.com  # CHANGE THIS to your domain
+  # For wildcard certificates, use DNS-01 challenge
+  # - "*.donelist.example.com"
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  renewBefore: 720h  # 30 days before expiry
+  usages:
+  - digital signature
+  - key encipherment
+
+---
+# Example: CloudFlare DNS-01 challenge configuration
+# Secret for CloudFlare API token
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: cloudflare-api-token
+#   namespace: donelist
+# type: Opaque
+# stringData:
+#   api-token: "your-cloudflare-api-token"
+# ---
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-cloudflare
+# spec:
+#   acme:
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     email: admin@donelist.example.com
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-cloudflare
+#     solvers:
+#     - dns01:
+#         cloudflare:
+#           email: admin@donelist.example.com
+#           apiTokenSecretRef:
+#             name: cloudflare-api-token
+#             key: api-token
+
+---
+# Example: AWS Route53 DNS-01 challenge configuration
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-route53
+# spec:
+#   acme:
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     email: admin@donelist.example.com
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-route53
+#     solvers:
+#     - dns01:
+#         route53:
+#           region: us-west-2
+#           # Use IAM role for service account (IRSA)
+#           # hostedZoneID: Z1234567890ABC  # Optional: specify hosted zone
+
+---
+# Example: Google Cloud DNS DNS-01 challenge configuration
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-clouddns
+# spec:
+#   acme:
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     email: admin@donelist.example.com
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-clouddns
+#     solvers:
+#     - dns01:
+#         cloudDNS:
+#           project: your-gcp-project-id
+#           # Use Workload Identity
+#           serviceAccountSecretRef:
+#             name: clouddns-dns01-solver-sa
+#             key: key.json
+
+---
+# Example: Self-signed certificate issuer (for development)
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: selfsigned-issuer
+# spec:
+#   selfSigned: {}
+# ---
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: donelist-api-cert-selfsigned
+#   namespace: donelist
+# spec:
+#   secretName: donelist-api-tls
+#   issuerRef:
+#     name: selfsigned-issuer
+#     kind: ClusterIssuer
+#   dnsNames:
+#   - api.donelist.example.com
+#   - localhost
+
+---
+# ServiceAccount for cert-manager (if using IRSA or Workload Identity)
+# AWS EKS example:
+# apiVersion: v1
+# kind: ServiceAccount
+# metadata:
+#   name: cert-manager
+#   namespace: cert-manager
+#   annotations:
+#     eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/cert-manager
+
+# GKE example:
+# apiVersion: v1
+# kind: ServiceAccount
+# metadata:
+#   name: cert-manager
+#   namespace: cert-manager
+#   annotations:
+#     iam.gke.io/gcp-service-account: cert-manager@PROJECT_ID.iam.gserviceaccount.com

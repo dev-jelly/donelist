@@ -309,3 +309,124 @@ func (q *Queue) RecoverStuckJobs(ctx context.Context) (int, error) {
 
 	return recovered, nil
 }
+
+// GetDLQJobs retrieves jobs from the dead letter queue for inspection
+func (q *Queue) GetDLQJobs(ctx context.Context, limit int) ([]*NotificationJob, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// Get jobs from DLQ without removing them
+	results, err := q.redis.LRange(ctx, deadLetterKey, 0, int64(limit-1)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DLQ jobs: %w", err)
+	}
+
+	jobs := make([]*NotificationJob, 0, len(results))
+	for _, data := range results {
+		var job NotificationJob
+		if err := json.Unmarshal([]byte(data), &job); err != nil {
+			q.logger.Error("Failed to unmarshal DLQ job",
+				zap.Error(err),
+				zap.String("data", data),
+			)
+			continue
+		}
+		jobs = append(jobs, &job)
+	}
+
+	return jobs, nil
+}
+
+// RetryDLQJob moves a job from DLQ back to the delayed queue for retry
+func (q *Queue) RetryDLQJob(ctx context.Context, jobID string) error {
+	// Get all jobs from DLQ
+	results, err := q.redis.LRange(ctx, deadLetterKey, 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get DLQ jobs: %w", err)
+	}
+
+	// Find the specific job
+	for i, data := range results {
+		var job NotificationJob
+		if err := json.Unmarshal([]byte(data), &job); err != nil {
+			continue
+		}
+
+		if job.ID == jobID {
+			// Remove from DLQ
+			if err := q.redis.LRem(ctx, deadLetterKey, 1, data).Err(); err != nil {
+				return fmt.Errorf("failed to remove job from DLQ: %w", err)
+			}
+
+			// Reset attempts and schedule for immediate retry
+			job.Attempts = 0
+			job.ScheduledAt = time.Now()
+			job.LastError = ""
+
+			// Re-enqueue
+			if err := q.Enqueue(ctx, &job); err != nil {
+				// If re-enqueue fails, put back in DLQ
+				q.redis.RPush(ctx, deadLetterKey, data)
+				return fmt.Errorf("failed to re-enqueue DLQ job: %w", err)
+			}
+
+			q.logger.Info("Retrying job from DLQ",
+				zap.String("job_id", jobID),
+				zap.Int("original_attempts", i),
+			)
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("job not found in DLQ: %s", jobID)
+}
+
+// PurgeDLQ removes all jobs from the dead letter queue
+func (q *Queue) PurgeDLQ(ctx context.Context) (int64, error) {
+	count, err := q.redis.LLen(ctx, deadLetterKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get DLQ length: %w", err)
+	}
+
+	if count == 0 {
+		return 0, nil
+	}
+
+	if err := q.redis.Del(ctx, deadLetterKey).Err(); err != nil {
+		return 0, fmt.Errorf("failed to purge DLQ: %w", err)
+	}
+
+	q.logger.Info("Purged DLQ",
+		zap.Int64("count", count),
+	)
+
+	return count, nil
+}
+
+// MoveToDLQ moves a job directly to the dead letter queue (for permanent failures)
+func (q *Queue) MoveToDLQ(ctx context.Context, job *NotificationJob, reason string) error {
+	job.LastError = reason
+
+	data, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("failed to marshal job: %w", err)
+	}
+
+	if err := q.redis.RPush(ctx, deadLetterKey, data).Err(); err != nil {
+		return fmt.Errorf("failed to move job to DLQ: %w", err)
+	}
+
+	// Remove from processing if it was there
+	q.redis.Del(ctx, fmt.Sprintf("%s:%s", processingKey, job.ID))
+
+	q.logger.Warn("Notification moved to DLQ",
+		zap.String("job_id", job.ID),
+		zap.String("user_id", job.UserID.String()),
+		zap.String("type", job.Type),
+		zap.String("reason", reason),
+	)
+
+	return nil
+}

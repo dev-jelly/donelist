@@ -46,11 +46,18 @@ func (r *Repository) Search(ctx context.Context, userID uuid.UUID, filters Searc
 
 	// Add ranking and snippet if full-text search is used
 	if filters.Query != "" {
-		baseQuery += `,
-			ts_rank(checkins.search_vector, to_tsquery('english', $1)) as rank,
-			ts_headline('english', checkins.content, to_tsquery('english', $1),
-				'MaxWords=20, MinWords=10, MaxFragments=1') as snippet
-		`
+		// Use Korean-aware sanitization
+		sanitized := SanitizeQueryForKorean(filters.Query)
+
+		// Use 'simple' configuration for better Korean support
+		baseQuery += fmt.Sprintf(`,
+			ts_rank(checkins.search_vector, to_tsquery('simple', $1)) as rank,
+			ts_headline('simple', checkins.content, to_tsquery('simple', $1),
+				'MaxWords=30, MinWords=10, MaxFragments=1, StartSel=<mark>, StopSel=</mark>') as snippet
+		`)
+
+		// Store the sanitized query to use later
+		filters.Query = sanitized
 	}
 
 	baseQuery += `
@@ -111,7 +118,7 @@ func (r *Repository) Search(ctx context.Context, userID uuid.UUID, filters Searc
 	// Get total count
 	countQuery := "SELECT COUNT(DISTINCT checkins.id) FROM checkins"
 	if filters.Query != "" {
-		countQuery += " WHERE search_vector @@ to_tsquery('english', $1) AND user_id = $2 AND deleted_at IS NULL"
+		countQuery += " WHERE search_vector @@ to_tsquery('simple', $1) AND user_id = $2 AND deleted_at IS NULL"
 	} else {
 		countQuery += " WHERE user_id = $1 AND deleted_at IS NULL"
 	}
@@ -119,8 +126,8 @@ func (r *Repository) Search(ctx context.Context, userID uuid.UUID, filters Searc
 	var total int64
 	var countArgs []interface{}
 	if filters.Query != "" {
-		tsQuery := sanitizeTsQuery(filters.Query)
-		countArgs = []interface{}{tsQuery, userID}
+		// Query is already sanitized above
+		countArgs = []interface{}{filters.Query, userID}
 	} else {
 		countArgs = []interface{}{userID}
 	}
@@ -170,10 +177,32 @@ func (r *Repository) GetFacets(ctx context.Context, userID uuid.UUID, filters Se
 		Categories: make([]CategoryFacet, 0),
 		Tags:       make([]TagFacet, 0),
 		Durations:  make([]DurationFacet, 0),
+		DateRanges: make([]DateRangeFacet, 0),
 	}
 
+	// Build base WHERE clause with filters (excluding what we're aggregating)
+	whereBuilder := NewQueryBuilder("SELECT 1")
+	whereBuilder.AddUserFilter(userID)
+	whereBuilder.AddDeletedFilter()
+
+	// Add other filters if present
+	if filters.Query != "" {
+		whereBuilder.AddFullTextSearch(SanitizeQueryForKorean(filters.Query))
+	}
+	if filters.StartDate != nil {
+		startDateStr := filters.StartDate.Format(time.RFC3339)
+		whereBuilder.AddDateRange(&startDateStr, nil)
+	}
+	if filters.EndDate != nil {
+		endDateStr := filters.EndDate.Format(time.RFC3339)
+		whereBuilder.AddDateRange(nil, &endDateStr)
+	}
+
+	_, whereArgs := whereBuilder.Build()
+	whereClauses := whereBuilder.whereClauses.String()
+
 	// Get category facets
-	categoryQuery := `
+	categoryQuery := fmt.Sprintf(`
 		SELECT
 			c.id,
 			c.name,
@@ -181,18 +210,18 @@ func (r *Repository) GetFacets(ctx context.Context, userID uuid.UUID, filters Se
 			COUNT(DISTINCT ch.id) as count
 		FROM categories c
 		INNER JOIN checkins ch ON ch.category_id = c.id
-		WHERE ch.user_id = $1 AND ch.deleted_at IS NULL
+		WHERE %s
 		GROUP BY c.id, c.name, c.color
 		ORDER BY count DESC
 		LIMIT 20
-	`
+	`, whereClauses)
 
-	if err := r.db.SelectContext(ctx, &facets.Categories, categoryQuery, userID); err != nil {
+	if err := r.db.SelectContext(ctx, &facets.Categories, categoryQuery, whereArgs...); err != nil {
 		return nil, fmt.Errorf("failed to get category facets: %w", err)
 	}
 
 	// Get tag facets
-	tagQuery := `
+	tagQuery := fmt.Sprintf(`
 		SELECT
 			t.id,
 			t.name,
@@ -200,32 +229,123 @@ func (r *Repository) GetFacets(ctx context.Context, userID uuid.UUID, filters Se
 		FROM tags t
 		INNER JOIN checkin_tags ct ON ct.tag_id = t.id
 		INNER JOIN checkins ch ON ch.id = ct.checkin_id
-		WHERE ch.user_id = $1 AND ch.deleted_at IS NULL
+		WHERE %s
 		GROUP BY t.id, t.name
 		ORDER BY count DESC
 		LIMIT 20
-	`
+	`, whereClauses)
 
-	if err := r.db.SelectContext(ctx, &facets.Tags, tagQuery, userID); err != nil {
+	if err := r.db.SelectContext(ctx, &facets.Tags, tagQuery, whereArgs...); err != nil {
 		return nil, fmt.Errorf("failed to get tag facets: %w", err)
 	}
 
-	// Get duration facets
-	durationQuery := `
+	// Get duration facets (bucketed for better UX)
+	durationQuery := fmt.Sprintf(`
 		SELECT
-			duration_minutes as duration,
+			CASE
+				WHEN duration_minutes <= 15 THEN 15
+				WHEN duration_minutes <= 30 THEN 30
+				WHEN duration_minutes <= 60 THEN 60
+				WHEN duration_minutes <= 120 THEN 120
+				WHEN duration_minutes <= 240 THEN 240
+				ELSE 999
+			END as duration,
 			COUNT(*) as count
-		FROM checkins
-		WHERE user_id = $1 AND deleted_at IS NULL
-		GROUP BY duration_minutes
-		ORDER BY duration_minutes
-	`
+		FROM checkins ch
+		WHERE %s
+		GROUP BY
+			CASE
+				WHEN duration_minutes <= 15 THEN 15
+				WHEN duration_minutes <= 30 THEN 30
+				WHEN duration_minutes <= 60 THEN 60
+				WHEN duration_minutes <= 120 THEN 120
+				WHEN duration_minutes <= 240 THEN 240
+				ELSE 999
+			END
+		ORDER BY duration
+	`, whereClauses)
 
-	if err := r.db.SelectContext(ctx, &facets.Durations, durationQuery, userID); err != nil {
+	if err := r.db.SelectContext(ctx, &facets.Durations, durationQuery, whereArgs...); err != nil {
 		return nil, fmt.Errorf("failed to get duration facets: %w", err)
 	}
 
+	// Get date range facets (histogram)
+	facets.DateRanges = r.getDateHistogram(ctx, userID, filters)
+
 	return facets, nil
+}
+
+// getDateHistogram generates date range buckets for faceted search
+func (r *Repository) getDateHistogram(ctx context.Context, userID uuid.UUID, filters SearchFilters) []DateRangeFacet {
+	now := time.Now()
+
+	// Define date buckets
+	buckets := []struct {
+		label string
+		start time.Time
+		end   time.Time
+	}{
+		{
+			label: "Today",
+			start: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()),
+			end:   now,
+		},
+		{
+			label: "Yesterday",
+			start: time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, now.Location()),
+			end:   time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()),
+		},
+		{
+			label: "Last 7 Days",
+			start: now.AddDate(0, 0, -7),
+			end:   now,
+		},
+		{
+			label: "Last 30 Days",
+			start: now.AddDate(0, 0, -30),
+			end:   now,
+		},
+		{
+			label: "Last 90 Days",
+			start: now.AddDate(0, 0, -90),
+			end:   now,
+		},
+		{
+			label: "This Year",
+			start: time.Date(now.Year(), 1, 1, 0, 0, 0, 0, now.Location()),
+			end:   now,
+		},
+	}
+
+	dateRanges := make([]DateRangeFacet, 0, len(buckets))
+
+	for _, bucket := range buckets {
+		query := `
+			SELECT COUNT(*)
+			FROM checkins
+			WHERE user_id = $1
+				AND deleted_at IS NULL
+				AND checkin_time >= $2
+				AND checkin_time < $3
+		`
+
+		var count int
+		if err := r.db.GetContext(ctx, &count, query, userID, bucket.start, bucket.end); err != nil {
+			// Log error but continue with other buckets
+			continue
+		}
+
+		if count > 0 {
+			dateRanges = append(dateRanges, DateRangeFacet{
+				Label: bucket.label,
+				Start: bucket.start,
+				End:   bucket.end,
+				Count: count,
+			})
+		}
+	}
+
+	return dateRanges
 }
 
 // GetSuggestions returns search suggestions based on partial input

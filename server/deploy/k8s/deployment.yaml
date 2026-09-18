@@ -10,6 +10,12 @@ metadata:
     version: v1.0.0
 spec:
   replicas: 2  # Adjust based on your needs
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # Zero-downtime deployments
+  revisionHistoryLimit: 10
   selector:
     matchLabels:
       app: donelist
@@ -69,18 +75,19 @@ spec:
               key: JWT_SECRET
 
         # Resource limits and requests
+        # Updated for production workload (prevents OOMKilled and CPU throttling)
         resources:
           requests:
-            cpu: 100m
-            memory: 128Mi
+            cpu: 500m       # Increased from 100m
+            memory: 512Mi   # Increased from 128Mi
           limits:
-            cpu: 500m
-            memory: 512Mi
+            cpu: 2000m      # Increased from 500m (2 cores)
+            memory: 1Gi     # Increased from 512Mi
 
         # Liveness probe
         livenessProbe:
           httpGet:
-            path: /health
+            path: /livez
             port: http
           initialDelaySeconds: 30
           periodSeconds: 10
@@ -90,7 +97,7 @@ spec:
         # Readiness probe
         readinessProbe:
           httpGet:
-            path: /ready
+            path: /readyz
             port: http
           initialDelaySeconds: 10
           periodSeconds: 5
@@ -138,6 +145,9 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: donelist-api-hpa
   namespace: donelist
+  labels:
+    app: donelist
+    component: api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -158,3 +168,24 @@ spec:
       target:
         type: Utilization
         averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 1
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 30
+      selectPolicy: Max

@@ -1,0 +1,1820 @@
+openapi: 3.0.3
+info:
+  title: DoneList API
+  description: Task management API with category and tag support
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@donelist.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+  - url: https://api.donelist.com/v1
+    description: Production server
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Categories
+    description: Category management endpoints
+  - name: Tags
+    description: Tag management endpoints
+  - name: Tasks
+    description: Task management endpoints
+  - name: Auth
+    description: Authentication endpoints
+  - name: Timeline
+    description: Timeline and analytics endpoints
+  - name: Calendar
+    description: Monthly calendar and heatmap visualization endpoints
+
+paths:
+  # Category Endpoints
+  /categories:
+    get:
+      tags:
+        - Categories
+      summary: List all categories
+      description: Returns all categories for the authenticated user
+      operationId: listCategories
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: List of categories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Category'
+                  meta:
+                    $ref: '#/components/schemas/MetaInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags:
+        - Categories
+      summary: Create a new category
+      description: Creates a new category for the authenticated user
+      operationId: createCategory
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCategoryRequest'
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /categories/{categoryId}:
+    get:
+      tags:
+        - Categories
+      summary: Get category by ID
+      description: Returns a specific category by ID
+      operationId: getCategoryById
+      parameters:
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Category details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      tags:
+        - Categories
+      summary: Update category
+      description: Updates an existing category
+      operationId: updateCategory
+      parameters:
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCategoryRequest'
+      responses:
+        '200':
+          description: Category updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      tags:
+        - Categories
+      summary: Delete category
+      description: Deletes a category
+      operationId: deleteCategory
+      parameters:
+        - $ref: '#/components/parameters/CategoryId'
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '204':
+          description: Category deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /categories/colors/recommend:
+    get:
+      tags:
+        - Categories
+      summary: Get recommended colors
+      description: Returns recommended color palette based on existing categories
+      operationId: getRecommendedColors
+      parameters:
+        - name: count
+          in: query
+          description: Number of colors to recommend
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 20
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: List of recommended colors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: string
+                      pattern: '^#[0-9A-Fa-f]{6}$'
+                      example: '#FF5733'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # Tag Endpoints
+  /tags:
+    get:
+      tags:
+        - Tags
+      summary: List all tags
+      description: Returns all tags for the authenticated user
+      operationId: listTags
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: List of tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+                  meta:
+                    $ref: '#/components/schemas/MetaInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags:
+        - Tags
+      summary: Create a new tag
+      description: Creates a new tag for the authenticated user
+      operationId: createTag
+      parameters:
+        - $ref: '#/components/parameters/XRequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTagRequest'
+      responses:
+        '201':
+          description: Tag created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /tags/autocomplete:
+    get:
+      tags:
+        - Tags
+      summary: Tag autocomplete suggestions
+      description: Returns tag suggestions based on query
+      operationId: autocompleteTags
+      parameters:
+        - name: q
+          in: query
+          description: Search query
+          schema:
+            type: string
+            minLength: 0
+            maxLength: 50
+        - name: limit
+          in: query
+          description: Maximum number of suggestions
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 50
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Tag suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /tags/popular:
+    get:
+      tags:
+        - Tags
+      summary: Get popular tags
+      description: Returns most frequently used tags
+      operationId: getPopularTags
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of tags to return
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: List of popular tags
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # Timeline Endpoints
+  /timeline/daily:
+    get:
+      tags:
+        - Timeline
+      summary: Get daily timeline (simple)
+      description: Returns check-ins for a specific day
+      operationId: getDailyTimeline
+      parameters:
+        - name: date
+          in: query
+          description: Date in YYYY-MM-DD format
+          schema:
+            type: string
+            format: date
+            example: '2024-01-15'
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Daily timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DayView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /timeline/daily/enhanced:
+    get:
+      tags:
+        - Timeline
+      summary: Get enhanced daily timeline
+      description: Returns an enhanced daily timeline with time blocks, gaps, and analytics. Supports caching and pagination.
+      operationId: getDailyTimelineEnhanced
+      parameters:
+        - name: date
+          in: query
+          description: Date in YYYY-MM-DD format (defaults to today)
+          schema:
+            type: string
+            format: date
+            example: '2024-01-15'
+        - name: block
+          in: query
+          description: Time block granularity in minutes
+          schema:
+            type: integer
+            enum: [15, 30, 45, 120]
+            default: 30
+        - name: timezone
+          in: query
+          description: IANA timezone identifier
+          schema:
+            type: string
+            default: 'UTC'
+            example: 'America/New_York'
+        - name: limit
+          in: query
+          description: Number of blocks per page (0 for no pagination)
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 1000
+            default: 0
+        - name: cursor
+          in: query
+          description: Pagination cursor from previous response
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          description: ETag from previous response for conditional requests
+          schema:
+            type: string
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Enhanced daily timeline
+          headers:
+            Cache-Control:
+              description: Cache control directives
+              schema:
+                type: string
+                example: 'private, max-age=300'
+            ETag:
+              description: Entity tag for caching
+              schema:
+                type: string
+                example: '"2024-01-15T10:30:00Z"'
+            Last-Modified:
+              description: Last modification timestamp
+              schema:
+                type: string
+                format: http-date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnhancedDayView'
+              examples:
+                non_paginated:
+                  summary: Non-paginated response with full day
+                  value:
+                    date: '2024-01-15'
+                    timezone: 'UTC'
+                    block_granularity: 30
+                    blocks:
+                      - start_time: '2024-01-15T00:00:00Z'
+                        end_time: '2024-01-15T00:30:00Z'
+                        duration_mins: 30
+                        checkins: []
+                        is_empty: true
+                        is_gap: false
+                    gaps: []
+                    summary:
+                      date: '2024-01-15'
+                      total_checkins: 5
+                      total_minutes: 150
+                      first_checkin_time: '2024-01-15T08:30:00Z'
+                      last_checkin_time: '2024-01-15T18:00:00Z'
+                      active_hours: 9.5
+                      gap_count: 2
+                      total_gap_minutes: 90
+                      completion_percent: 10.42
+                      average_gap_minutes: 45.0
+                    category_legend: []
+                    previous_day: '2024-01-14'
+                    next_day: '2024-01-16'
+                    generated_at: '2024-01-15T10:30:00Z'
+                paginated:
+                  summary: Paginated response with cursor
+                  value:
+                    date: '2024-01-15'
+                    timezone: 'UTC'
+                    block_granularity: 30
+                    blocks:
+                      - start_time: '2024-01-15T00:00:00Z'
+                        end_time: '2024-01-15T00:30:00Z'
+                        duration_mins: 30
+                        checkins: []
+                        is_empty: true
+                        is_gap: false
+                    pagination:
+                      limit: 24
+                      has_next: true
+                      next_cursor: 'eyJ0aW1lIjoiMjAyNC0wMS0xNVQxMjowMDowMFoifQ=='
+                      total_count: 48
+                    gaps: []
+                    summary:
+                      date: '2024-01-15'
+                      total_checkins: 5
+                      total_minutes: 150
+                    category_legend: []
+                    previous_day: '2024-01-14'
+                    next_day: '2024-01-16'
+                    generated_at: '2024-01-15T10:30:00Z'
+        '304':
+          description: Not Modified - Use cached version
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /timeline/weekly:
+    get:
+      tags:
+        - Timeline
+      summary: Get weekly timeline
+      description: Returns check-ins for a week, grouped by day
+      operationId: getWeeklyTimeline
+      parameters:
+        - name: date
+          in: query
+          description: Any date within the target week (defaults to current week)
+          schema:
+            type: string
+            format: date
+            example: '2024-01-15'
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Weekly timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WeekView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /timeline/monthly:
+    get:
+      tags:
+        - Timeline
+      summary: Get monthly timeline
+      description: Returns check-ins for a month, grouped by day
+      operationId: getMonthlyTimeline
+      parameters:
+        - name: date
+          in: query
+          description: Any date within the target month (defaults to current month)
+          schema:
+            type: string
+            format: date
+            example: '2024-01-15'
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Monthly timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonthView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # Calendar Endpoints
+  /calendar/monthly:
+    get:
+      tags:
+        - Calendar
+      summary: Get monthly calendar view
+      description: |
+        Returns a complete monthly calendar view with daily summaries, streaks, and statistics.
+        The response includes weeks formatted for UI rendering, with support for both Sunday and Monday week starts.
+
+        **Rate Limit:** 100 requests per minute
+      operationId: getMonthlyCalendar
+      parameters:
+        - name: year
+          in: query
+          description: Year (1970-2100)
+          schema:
+            type: integer
+            minimum: 1970
+            maximum: 2100
+            example: 2024
+        - name: month
+          in: query
+          description: Month (1-12)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            example: 11
+        - name: start_day
+          in: query
+          description: First day of the week for calendar display
+          schema:
+            type: string
+            enum: [sunday, monday]
+            default: monday
+        - name: timezone
+          in: query
+          description: IANA timezone identifier
+          schema:
+            type: string
+            default: UTC
+            example: America/New_York
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Monthly calendar data
+          headers:
+            Cache-Control:
+              description: Cache control directives
+              schema:
+                type: string
+                example: 'public, max-age=3600'
+            Expires:
+              description: Cache expiration time
+              schema:
+                type: string
+                format: http-date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonthlyCalendar'
+              examples:
+                november_2024:
+                  summary: November 2024 calendar with activity
+                  value:
+                    year: 2024
+                    month: 11
+                    month_name: November
+                    start_day: monday
+                    weeks:
+                      - days:
+                        - date: '2024-10-28'
+                          checkin_count: 0
+                          total_minutes: 0
+                          completion_percent: 0
+                          color_intensity: 0
+                          is_current_month: false
+                          is_today: false
+                          has_checkins: false
+                    summary:
+                      total_checkins: 50
+                      total_minutes: 1200
+                      days_with_checkins: 20
+                      total_days_in_month: 30
+                      average_per_day: 1.67
+                      completion_rate: 66.67
+                      most_productive_day: '2024-11-15'
+                      most_productive_count: 8
+                      current_streak: 5
+                      longest_streak: 12
+                    categories:
+                      - category_id: '550e8400-e29b-41d4-a716-446655440000'
+                        category_name: Work
+                        count: 30
+                        percentage: 60
+                    previous_month: '2024-10'
+                    next_month: '2024-12'
+                    generated_at: '2024-11-15T10:30:00Z'
+                    cache_expiration: '2024-11-15T11:30:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /calendar/month:
+    get:
+      tags:
+        - Calendar
+      summary: Get monthly calendar view (v2)
+      description: |
+        Returns a monthly calendar view with enhanced caching support via ETags.
+
+        **Features:**
+        - Schema versioning for API stability
+        - ETag-based conditional requests (304 Not Modified)
+        - 15-minute cache TTL
+
+        **Rate Limit:** 100 requests per minute
+      operationId: getMonthlyCalendarV2
+      parameters:
+        - name: year
+          in: query
+          required: true
+          description: Year (1970-2100)
+          schema:
+            type: integer
+            minimum: 1970
+            maximum: 2100
+            example: 2024
+        - name: month
+          in: query
+          required: true
+          description: Month (1-12)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            example: 11
+        - name: startOfWeek
+          in: query
+          description: First day of the week (sun or mon)
+          schema:
+            type: string
+            enum: [sun, mon]
+            default: mon
+        - name: timezone
+          in: query
+          description: IANA timezone identifier
+          schema:
+            type: string
+            default: UTC
+            example: America/New_York
+        - name: If-None-Match
+          in: header
+          description: ETag from previous response for conditional requests
+          schema:
+            type: string
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Monthly calendar data with versioning
+          headers:
+            ETag:
+              description: Entity tag for caching
+              schema:
+                type: string
+                example: '"a1b2c3d4e5f6"'
+            Cache-Control:
+              description: Cache control directives
+              schema:
+                type: string
+                example: 'private, max-age=900'
+            X-Schema-Version:
+              description: Response schema version
+              schema:
+                type: string
+                example: '1.0.0'
+            Expires:
+              description: Cache expiration time
+              schema:
+                type: string
+                format: http-date
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonthlyCalendarV2Response'
+        '304':
+          description: Not Modified - Use cached version when ETag matches
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /calendar/heatmap:
+    get:
+      tags:
+        - Calendar
+      summary: Get heatmap data
+      description: |
+        Returns daily activity heatmap data for visualization (GitHub-style contribution graph).
+
+        **Constraints:**
+        - Maximum date range: 366 days
+        - Recommended for year-at-a-glance views
+
+        **Rate Limit:** 100 requests per minute
+      operationId: getHeatmap
+      parameters:
+        - name: start_date
+          in: query
+          required: true
+          description: Start date in YYYY-MM-DD format
+          schema:
+            type: string
+            format: date
+            example: '2024-01-01'
+        - name: end_date
+          in: query
+          required: true
+          description: End date in YYYY-MM-DD format
+          schema:
+            type: string
+            format: date
+            example: '2024-12-31'
+        - name: timezone
+          in: query
+          description: IANA timezone identifier
+          schema:
+            type: string
+            default: UTC
+            example: America/New_York
+        - $ref: '#/components/parameters/XRequestId'
+      responses:
+        '200':
+          description: Heatmap data
+          headers:
+            Cache-Control:
+              description: Cache control directives
+              schema:
+                type: string
+                example: 'public, max-age=3600'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeatmapData'
+              examples:
+                year_2024:
+                  summary: Full year 2024 heatmap
+                  value:
+                    start_date: '2024-01-01'
+                    end_date: '2024-12-31'
+                    days:
+                      - date: '2024-01-01'
+                        checkin_count: 5
+                        total_minutes: 120
+                        completion_percent: 8.33
+                        color_intensity: 1
+                    total_days: 366
+                    active_days: 250
+                    total_checkins: 1500
+                    generated_at: '2024-11-15T10:30:00Z'
+        '400':
+          description: Bad request - Invalid date format or range
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_format:
+                  value:
+                    error: validation_error
+                    message: invalid start_date format, use YYYY-MM-DD
+                range_too_large:
+                  value:
+                    error: validation_error
+                    message: date range cannot exceed 366 days
+                invalid_range:
+                  value:
+                    error: validation_error
+                    message: end_date must be after start_date
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      description: Category UUID
+      schema:
+        type: string
+        format: uuid
+
+    TagId:
+      name: tagId
+      in: path
+      required: true
+      description: Tag UUID
+      schema:
+        type: string
+        format: uuid
+
+    XRequestId:
+      name: X-Request-ID
+      in: header
+      description: Request ID for tracing
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Category:
+      type: object
+      required:
+        - id
+        - user_id
+        - name
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Category unique identifier
+        user_id:
+          type: string
+          format: uuid
+          description: User who owns this category
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Category name
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Category color in hex format
+          example: '#FF5733'
+        icon:
+          type: string
+          maxLength: 50
+          description: Optional icon identifier
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    CreateCategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Category name
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Category color in hex format
+          example: '#FF5733'
+        icon:
+          type: string
+          maxLength: 50
+          description: Optional icon identifier
+
+    UpdateCategoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Category name
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+          description: Category color in hex format
+          example: '#FF5733'
+        icon:
+          type: string
+          maxLength: 50
+          description: Optional icon identifier
+
+    Tag:
+      type: object
+      required:
+        - id
+        - user_id
+        - name
+        - usage_count
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Tag unique identifier
+        user_id:
+          type: string
+          format: uuid
+          description: User who owns this tag
+        name:
+          type: string
+          minLength: 1
+          maxLength: 30
+          description: Tag name
+        usage_count:
+          type: integer
+          minimum: 0
+          description: Number of times this tag has been used
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+
+    CreateTagRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 30
+          description: Tag name
+
+    MetaInfo:
+      type: object
+      properties:
+        total:
+          type: integer
+          description: Total number of items
+        count:
+          type: integer
+          description: Number of items in current response
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details
+        request_id:
+          type: string
+          format: uuid
+          description: Request ID for tracing
+
+    # Timeline Schemas
+    DayView:
+      type: object
+      required:
+        - date
+        - checkins
+        - total
+      properties:
+        date:
+          type: string
+          format: date
+          description: Date in YYYY-MM-DD format
+          example: '2024-01-15'
+        checkins:
+          type: array
+          items:
+            $ref: '#/components/schemas/Checkin'
+        total:
+          type: integer
+          description: Total number of check-ins
+
+    WeekView:
+      type: object
+      required:
+        - start_date
+        - end_date
+        - days
+        - total
+      properties:
+        start_date:
+          type: string
+          format: date
+          description: First day of week (Monday)
+          example: '2024-01-15'
+        end_date:
+          type: string
+          format: date
+          description: Last day of week (Sunday)
+          example: '2024-01-21'
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/DayView'
+        total:
+          type: integer
+          description: Total check-ins for the week
+
+    MonthView:
+      type: object
+      required:
+        - year
+        - month
+        - days
+        - total
+      properties:
+        year:
+          type: integer
+          example: 2024
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          example: 1
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/DayView'
+        total:
+          type: integer
+          description: Total check-ins for the month
+
+    EnhancedDayView:
+      type: object
+      required:
+        - date
+        - timezone
+        - block_granularity
+        - blocks
+        - gaps
+        - summary
+        - category_legend
+        - previous_day
+        - next_day
+        - generated_at
+      properties:
+        date:
+          type: string
+          format: date
+          description: Date in YYYY-MM-DD format
+          example: '2024-01-15'
+        timezone:
+          type: string
+          description: IANA timezone identifier
+          example: 'UTC'
+        block_granularity:
+          type: integer
+          description: Block size in minutes
+          enum: [15, 30, 45, 120]
+        blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeBlock'
+        pagination:
+          $ref: '#/components/schemas/PaginationMeta'
+        gaps:
+          type: array
+          items:
+            $ref: '#/components/schemas/Gap'
+        summary:
+          $ref: '#/components/schemas/DailySummary'
+        category_legend:
+          type: array
+          items:
+            $ref: '#/components/schemas/CategoryLegend'
+        previous_day:
+          type: string
+          format: date
+          description: Previous day for navigation
+          example: '2024-01-14'
+        next_day:
+          type: string
+          format: date
+          description: Next day for navigation
+          example: '2024-01-16'
+        generated_at:
+          type: string
+          format: date-time
+          description: Timestamp when view was generated
+          example: '2024-01-15T10:30:00Z'
+
+    TimeBlock:
+      type: object
+      required:
+        - start_time
+        - end_time
+        - duration_mins
+        - checkins
+        - is_empty
+        - is_gap
+      properties:
+        start_time:
+          type: string
+          format: date-time
+          description: Block start time (RFC3339)
+          example: '2024-01-15T08:00:00Z'
+        end_time:
+          type: string
+          format: date-time
+          description: Block end time (RFC3339)
+          example: '2024-01-15T08:30:00Z'
+        duration_mins:
+          type: integer
+          description: Block duration in minutes
+          example: 30
+        checkins:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckinWithMeta'
+        is_empty:
+          type: boolean
+          description: True if no check-ins in this block
+        is_gap:
+          type: boolean
+          description: True if this is a gap between check-ins
+
+    CheckinWithMeta:
+      allOf:
+        - $ref: '#/components/schemas/Checkin'
+        - type: object
+          properties:
+            category_name:
+              type: string
+              description: Category name (enriched)
+            category_color:
+              type: string
+              pattern: '^#[0-9A-Fa-f]{6}$'
+              description: Category color (enriched)
+            category_icon:
+              type: string
+              description: Category icon (enriched)
+
+    Checkin:
+      type: object
+      required:
+        - id
+        - user_id
+        - title
+        - checkin_time
+        - duration_minutes
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 1000
+        category_id:
+          type: string
+          format: uuid
+        checkin_time:
+          type: string
+          format: date-time
+        duration_minutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+        tags:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Gap:
+      type: object
+      required:
+        - start_time
+        - end_time
+        - duration_mins
+      properties:
+        start_time:
+          type: string
+          format: date-time
+          description: Gap start time (RFC3339)
+          example: '2024-01-15T10:30:00Z'
+        end_time:
+          type: string
+          format: date-time
+          description: Gap end time (RFC3339)
+          example: '2024-01-15T11:00:00Z'
+        duration_mins:
+          type: integer
+          description: Gap duration in minutes
+          example: 30
+
+    DailySummary:
+      type: object
+      required:
+        - date
+        - total_checkins
+        - total_minutes
+        - active_hours
+        - gap_count
+        - total_gap_minutes
+        - completion_percent
+        - average_gap_minutes
+      properties:
+        date:
+          type: string
+          format: date
+          example: '2024-01-15'
+        total_checkins:
+          type: integer
+          description: Total number of check-ins
+          example: 15
+        total_minutes:
+          type: integer
+          description: Total tracked time in minutes
+          example: 450
+        first_checkin_time:
+          type: string
+          format: date-time
+          description: Time of first check-in
+          example: '2024-01-15T08:30:00Z'
+        last_checkin_time:
+          type: string
+          format: date-time
+          description: Time of last check-in
+          example: '2024-01-15T18:00:00Z'
+        active_hours:
+          type: number
+          format: float
+          description: Number of hours with activity
+          example: 9.5
+        gap_count:
+          type: integer
+          description: Number of gaps between check-ins
+          example: 2
+        total_gap_minutes:
+          type: integer
+          description: Total gap duration in minutes
+          example: 90
+        completion_percent:
+          type: number
+          format: float
+          description: Percentage of day tracked (of 24 hours)
+          example: 31.25
+        average_gap_minutes:
+          type: number
+          format: float
+          description: Average gap duration
+          example: 45.0
+
+    CategoryLegend:
+      type: object
+      required:
+        - category_id
+        - category_name
+        - count
+      properties:
+        category_id:
+          type: string
+          format: uuid
+        category_name:
+          type: string
+        color:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+        icon:
+          type: string
+        count:
+          type: integer
+          description: Number of check-ins in this category
+          example: 5
+
+    PaginationMeta:
+      type: object
+      required:
+        - limit
+        - has_next
+        - total_count
+      properties:
+        limit:
+          type: integer
+          description: Page size
+          example: 24
+        has_next:
+          type: boolean
+          description: Whether there are more pages
+        next_cursor:
+          type: string
+          description: Cursor for next page
+          example: 'eyJ0aW1lIjoiMjAyNC0wMS0xNVQxMjowMDowMFoifQ=='
+        total_count:
+          type: integer
+          description: Total number of items
+          example: 48
+
+    # Calendar Schemas
+    MonthlyCalendar:
+      type: object
+      required:
+        - year
+        - month
+        - month_name
+        - start_day
+        - weeks
+        - summary
+        - previous_month
+        - next_month
+        - generated_at
+      properties:
+        year:
+          type: integer
+          minimum: 1970
+          maximum: 2100
+          description: Calendar year
+          example: 2024
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+          description: Calendar month (1-12)
+          example: 11
+        month_name:
+          type: string
+          description: Full month name
+          example: November
+        start_day:
+          type: string
+          enum: [sunday, monday]
+          description: First day of the week
+          example: monday
+        weeks:
+          type: array
+          description: Calendar weeks (4-6 weeks depending on month)
+          minItems: 4
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/CalendarWeek'
+        summary:
+          $ref: '#/components/schemas/MonthlySummary'
+        categories:
+          type: array
+          description: Check-in breakdown by category
+          items:
+            $ref: '#/components/schemas/CategoryBreakdown'
+        previous_month:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+          description: Previous month in YYYY-MM format
+          example: '2024-10'
+        next_month:
+          type: string
+          pattern: '^\d{4}-\d{2}$'
+          description: Next month in YYYY-MM format
+          example: '2024-12'
+        generated_at:
+          type: string
+          format: date-time
+          description: Timestamp when calendar was generated
+        cache_expiration:
+          type: string
+          format: date-time
+          description: When cached data expires
+
+    CalendarWeek:
+      type: object
+      required:
+        - days
+      properties:
+        days:
+          type: array
+          description: Seven days in the week
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/CalendarDay'
+
+    CalendarDay:
+      type: object
+      required:
+        - date
+        - checkin_count
+        - total_minutes
+        - completion_percent
+        - color_intensity
+        - is_current_month
+        - has_checkins
+      properties:
+        date:
+          type: string
+          format: date
+          description: Date in YYYY-MM-DD format
+          example: '2024-11-15'
+        checkin_count:
+          type: integer
+          minimum: 0
+          description: Number of check-ins on this day
+          example: 5
+        total_minutes:
+          type: integer
+          minimum: 0
+          description: Total duration of all check-ins in minutes
+          example: 120
+        completion_percent:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Percentage of day covered by check-ins (0-100)
+          example: 8.33
+        color_intensity:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: |
+            Color intensity level for heatmap display:
+            - 0: No activity
+            - 1: Low (1-25%)
+            - 2: Medium-low (26-50%)
+            - 3: Medium-high (51-75%)
+            - 4: High (76-100%)
+          example: 1
+        is_current_month:
+          type: boolean
+          description: True if day belongs to the displayed month
+          example: true
+        is_today:
+          type: boolean
+          description: True if this is today's date
+          example: false
+        has_checkins:
+          type: boolean
+          description: True if there are any check-ins
+          example: true
+
+    MonthlySummary:
+      type: object
+      required:
+        - total_checkins
+        - total_minutes
+        - days_with_checkins
+        - total_days_in_month
+        - average_per_day
+        - completion_rate
+      properties:
+        total_checkins:
+          type: integer
+          minimum: 0
+          description: Total number of check-ins in the month
+          example: 50
+        total_minutes:
+          type: integer
+          minimum: 0
+          description: Total duration of all check-ins in minutes
+          example: 1200
+        days_with_checkins:
+          type: integer
+          minimum: 0
+          description: Number of days with at least one check-in
+          example: 20
+        total_days_in_month:
+          type: integer
+          minimum: 28
+          maximum: 31
+          description: Total days in the month
+          example: 30
+        average_per_day:
+          type: number
+          format: float
+          minimum: 0
+          description: Average check-ins per day
+          example: 1.67
+        completion_rate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Percentage of days with check-ins
+          example: 66.67
+        most_productive_day:
+          type: string
+          format: date
+          description: Date with most check-ins
+          example: '2024-11-15'
+        most_productive_count:
+          type: integer
+          minimum: 0
+          description: Check-in count on most productive day
+          example: 8
+        current_streak:
+          type: integer
+          minimum: 0
+          description: Current consecutive days with check-ins
+          example: 5
+        longest_streak:
+          type: integer
+          minimum: 0
+          description: Longest streak in this month
+          example: 12
+
+    CategoryBreakdown:
+      type: object
+      required:
+        - category_name
+        - count
+        - percentage
+      properties:
+        category_id:
+          type: string
+          format: uuid
+          description: Category unique identifier (null for uncategorized)
+        category_name:
+          type: string
+          description: Category name
+          example: Work
+        count:
+          type: integer
+          minimum: 0
+          description: Number of check-ins in this category
+          example: 30
+        percentage:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Percentage of total check-ins
+          example: 60
+
+    MonthlyCalendarV2Response:
+      type: object
+      required:
+        - schemaVersion
+        - data
+      properties:
+        schemaVersion:
+          type: string
+          pattern: '^\d+\.\d+\.\d+$'
+          description: API response schema version (semver)
+          example: '1.0.0'
+        data:
+          $ref: '#/components/schemas/MonthlyCalendar'
+
+    HeatmapData:
+      type: object
+      required:
+        - start_date
+        - end_date
+        - days
+        - total_days
+        - active_days
+        - total_checkins
+        - generated_at
+      properties:
+        start_date:
+          type: string
+          format: date
+          description: Start date of the range
+          example: '2024-01-01'
+        end_date:
+          type: string
+          format: date
+          description: End date of the range
+          example: '2024-12-31'
+        days:
+          type: array
+          description: Array of days with activity data
+          items:
+            $ref: '#/components/schemas/HeatmapDay'
+        total_days:
+          type: integer
+          minimum: 1
+          maximum: 366
+          description: Total number of days in the range
+          example: 366
+        active_days:
+          type: integer
+          minimum: 0
+          description: Days with at least one check-in
+          example: 250
+        total_checkins:
+          type: integer
+          minimum: 0
+          description: Total check-ins in the range
+          example: 1500
+        generated_at:
+          type: string
+          format: date-time
+          description: Timestamp when data was generated
+
+    HeatmapDay:
+      type: object
+      required:
+        - date
+        - checkin_count
+        - total_minutes
+        - completion_percent
+        - color_intensity
+      properties:
+        date:
+          type: string
+          format: date
+          description: Date in YYYY-MM-DD format
+          example: '2024-01-15'
+        checkin_count:
+          type: integer
+          minimum: 0
+          description: Number of check-ins
+          example: 5
+        total_minutes:
+          type: integer
+          minimum: 0
+          description: Total duration in minutes
+          example: 120
+        completion_percent:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Percentage of day covered
+          example: 8.33
+        color_intensity:
+          type: integer
+          minimum: 0
+          maximum: 4
+          description: Color intensity level (0-4)
+          example: 1
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            validation_error:
+              value:
+                error: validation_error
+                message: Invalid input data
+                details:
+                  field: name
+                  reason: Name must be between 1 and 50 characters
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            invalid_token:
+              value:
+                error: unauthorized
+                message: Invalid or expired authentication token
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            not_found:
+              value:
+                error: not_found
+                message: Category not found
+
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            duplicate_name:
+              value:
+                error: conflict
+                message: A category with this name already exists
+
+    TooManyRequests:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            rate_limit:
+              value:
+                error: rate_limit_exceeded
+                message: Too many requests, please try again later
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            server_error:
+              value:
+                error: internal_server_error
+                message: An unexpected error occurred

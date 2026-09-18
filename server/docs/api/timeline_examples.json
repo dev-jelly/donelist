@@ -1,0 +1,395 @@
+{
+  "examples": {
+    "daily_timeline_simple": {
+      "description": "Simple daily timeline response",
+      "response": {
+        "date": "2024-01-15",
+        "checkins": [
+          {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            "title": "Morning standup meeting",
+            "description": "Daily team sync",
+            "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+            "checkin_time": "2024-01-15T09:00:00Z",
+            "duration_minutes": 30,
+            "tags": ["meeting", "team"],
+            "created_at": "2024-01-15T09:00:00Z",
+            "updated_at": "2024-01-15T09:00:00Z"
+          },
+          {
+            "id": "550e8400-e29b-41d4-a716-446655440001",
+            "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            "title": "Code review",
+            "description": "Review PR #123",
+            "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+            "checkin_time": "2024-01-15T10:30:00Z",
+            "duration_minutes": 45,
+            "tags": ["code", "review"],
+            "created_at": "2024-01-15T10:30:00Z",
+            "updated_at": "2024-01-15T10:30:00Z"
+          }
+        ],
+        "total": 2
+      }
+    },
+    "enhanced_daily_timeline_non_paginated": {
+      "description": "Enhanced daily timeline with full analytics",
+      "response": {
+        "date": "2024-01-15",
+        "timezone": "UTC",
+        "block_granularity": 30,
+        "blocks": [
+          {
+            "start_time": "2024-01-15T08:00:00Z",
+            "end_time": "2024-01-15T08:30:00Z",
+            "duration_mins": 30,
+            "checkins": [],
+            "is_empty": true,
+            "is_gap": false
+          },
+          {
+            "start_time": "2024-01-15T08:30:00Z",
+            "end_time": "2024-01-15T09:00:00Z",
+            "duration_mins": 30,
+            "checkins": [
+              {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "title": "Morning standup",
+                "description": "Daily team sync",
+                "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                "category_name": "Work",
+                "category_color": "#3498db",
+                "category_icon": "briefcase",
+                "checkin_time": "2024-01-15T08:30:00Z",
+                "duration_minutes": 30,
+                "tags": ["meeting"],
+                "created_at": "2024-01-15T08:30:00Z",
+                "updated_at": "2024-01-15T08:30:00Z"
+              }
+            ],
+            "is_empty": false,
+            "is_gap": false
+          },
+          {
+            "start_time": "2024-01-15T09:00:00Z",
+            "end_time": "2024-01-15T09:30:00Z",
+            "duration_mins": 30,
+            "checkins": [],
+            "is_empty": true,
+            "is_gap": true
+          }
+        ],
+        "gaps": [
+          {
+            "start_time": "2024-01-15T09:00:00Z",
+            "end_time": "2024-01-15T10:30:00Z",
+            "duration_mins": 90
+          }
+        ],
+        "summary": {
+          "date": "2024-01-15",
+          "total_checkins": 5,
+          "total_minutes": 150,
+          "first_checkin_time": "2024-01-15T08:30:00Z",
+          "last_checkin_time": "2024-01-15T18:00:00Z",
+          "active_hours": 9.5,
+          "gap_count": 2,
+          "total_gap_minutes": 90,
+          "completion_percent": 10.42,
+          "average_gap_minutes": 45.0
+        },
+        "category_legend": [
+          {
+            "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+            "category_name": "Work",
+            "color": "#3498db",
+            "icon": "briefcase",
+            "count": 3
+          },
+          {
+            "category_id": "8d9e7780-8536-51ef-b055-f18fc2f91bf8",
+            "category_name": "Personal",
+            "color": "#e74c3c",
+            "icon": "user",
+            "count": 2
+          }
+        ],
+        "previous_day": "2024-01-14",
+        "next_day": "2024-01-16",
+        "generated_at": "2024-01-15T10:30:00Z"
+      }
+    },
+    "enhanced_daily_timeline_paginated": {
+      "description": "Enhanced daily timeline with pagination",
+      "response": {
+        "date": "2024-01-15",
+        "timezone": "UTC",
+        "block_granularity": 30,
+        "blocks": [
+          {
+            "start_time": "2024-01-15T00:00:00Z",
+            "end_time": "2024-01-15T00:30:00Z",
+            "duration_mins": 30,
+            "checkins": [],
+            "is_empty": true,
+            "is_gap": false
+          }
+        ],
+        "pagination": {
+          "limit": 24,
+          "has_next": true,
+          "next_cursor": "eyJ0aW1lIjoiMjAyNC0wMS0xNVQxMjowMDowMFoifQ==",
+          "total_count": 48
+        },
+        "gaps": [],
+        "summary": {
+          "date": "2024-01-15",
+          "total_checkins": 5,
+          "total_minutes": 150,
+          "first_checkin_time": "2024-01-15T08:30:00Z",
+          "last_checkin_time": "2024-01-15T18:00:00Z",
+          "active_hours": 9.5,
+          "gap_count": 2,
+          "total_gap_minutes": 90,
+          "completion_percent": 10.42,
+          "average_gap_minutes": 45.0
+        },
+        "category_legend": [
+          {
+            "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+            "category_name": "Work",
+            "color": "#3498db",
+            "icon": "briefcase",
+            "count": 3
+          }
+        ],
+        "previous_day": "2024-01-14",
+        "next_day": "2024-01-16",
+        "generated_at": "2024-01-15T10:30:00Z"
+      }
+    },
+    "weekly_timeline": {
+      "description": "Weekly timeline with grouped days",
+      "response": {
+        "start_date": "2024-01-15",
+        "end_date": "2024-01-21",
+        "days": [
+          {
+            "date": "2024-01-15",
+            "checkins": [
+              {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "title": "Morning standup",
+                "checkin_time": "2024-01-15T09:00:00Z",
+                "duration_minutes": 30,
+                "created_at": "2024-01-15T09:00:00Z",
+                "updated_at": "2024-01-15T09:00:00Z"
+              }
+            ],
+            "total": 1
+          },
+          {
+            "date": "2024-01-16",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-17",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-18",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-19",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-20",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-21",
+            "checkins": [],
+            "total": 0
+          }
+        ],
+        "total": 1
+      }
+    },
+    "monthly_timeline": {
+      "description": "Monthly timeline for January 2024",
+      "response": {
+        "year": 2024,
+        "month": 1,
+        "days": [
+          {
+            "date": "2024-01-01",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-02",
+            "checkins": [],
+            "total": 0
+          },
+          {
+            "date": "2024-01-15",
+            "checkins": [
+              {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "title": "Project work",
+                "checkin_time": "2024-01-15T14:00:00Z",
+                "duration_minutes": 120,
+                "created_at": "2024-01-15T14:00:00Z",
+                "updated_at": "2024-01-15T14:00:00Z"
+              }
+            ],
+            "total": 1
+          }
+        ],
+        "total": 1
+      }
+    },
+    "error_invalid_date": {
+      "description": "Error response for invalid date format",
+      "response": {
+        "error": "invalid date format, use YYYY-MM-DD"
+      }
+    },
+    "error_invalid_block_granularity": {
+      "description": "Error response for invalid block granularity",
+      "response": {
+        "error": "invalid block granularity, use 15, 30, 45, or 120"
+      }
+    },
+    "error_invalid_limit": {
+      "description": "Error response for limit out of range",
+      "response": {
+        "error": "limit must be between 0 and 1000"
+      }
+    },
+    "error_unauthorized": {
+      "description": "Error response for missing authentication",
+      "response": {
+        "error": "unauthorized"
+      }
+    },
+    "cache_headers_example": {
+      "description": "Example of cache-related headers for non-paginated requests",
+      "headers": {
+        "Cache-Control": "private, max-age=300",
+        "ETag": "\"2024-01-15T10:30:00Z\"",
+        "Last-Modified": "Mon, 15 Jan 2024 10:30:00 GMT"
+      }
+    },
+    "enhanced_timeline_with_multiple_categories": {
+      "description": "Enhanced timeline showing multiple categories",
+      "response": {
+        "date": "2024-01-15",
+        "timezone": "America/New_York",
+        "block_granularity": 15,
+        "blocks": [
+          {
+            "start_time": "2024-01-15T09:00:00-05:00",
+            "end_time": "2024-01-15T09:15:00-05:00",
+            "duration_mins": 15,
+            "checkins": [
+              {
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "title": "Email triage",
+                "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                "category_name": "Work",
+                "category_color": "#3498db",
+                "category_icon": "briefcase",
+                "checkin_time": "2024-01-15T09:00:00-05:00",
+                "duration_minutes": 15,
+                "created_at": "2024-01-15T09:00:00-05:00",
+                "updated_at": "2024-01-15T09:00:00-05:00"
+              }
+            ],
+            "is_empty": false,
+            "is_gap": false
+          },
+          {
+            "start_time": "2024-01-15T12:00:00-05:00",
+            "end_time": "2024-01-15T12:15:00-05:00",
+            "duration_mins": 15,
+            "checkins": [
+              {
+                "id": "550e8400-e29b-41d4-a716-446655440001",
+                "user_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                "title": "Lunch break",
+                "category_id": "8d9e7780-8536-51ef-b055-f18fc2f91bf8",
+                "category_name": "Personal",
+                "category_color": "#e74c3c",
+                "category_icon": "utensils",
+                "checkin_time": "2024-01-15T12:00:00-05:00",
+                "duration_minutes": 45,
+                "created_at": "2024-01-15T12:00:00-05:00",
+                "updated_at": "2024-01-15T12:00:00-05:00"
+              }
+            ],
+            "is_empty": false,
+            "is_gap": false
+          }
+        ],
+        "gaps": [
+          {
+            "start_time": "2024-01-15T09:15:00-05:00",
+            "end_time": "2024-01-15T12:00:00-05:00",
+            "duration_mins": 165
+          }
+        ],
+        "summary": {
+          "date": "2024-01-15",
+          "total_checkins": 8,
+          "total_minutes": 375,
+          "first_checkin_time": "2024-01-15T09:00:00-05:00",
+          "last_checkin_time": "2024-01-15T17:30:00-05:00",
+          "active_hours": 8.5,
+          "gap_count": 3,
+          "total_gap_minutes": 165,
+          "completion_percent": 26.04,
+          "average_gap_minutes": 55.0
+        },
+        "category_legend": [
+          {
+            "category_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+            "category_name": "Work",
+            "color": "#3498db",
+            "icon": "briefcase",
+            "count": 5
+          },
+          {
+            "category_id": "8d9e7780-8536-51ef-b055-f18fc2f91bf8",
+            "category_name": "Personal",
+            "color": "#e74c3c",
+            "icon": "utensils",
+            "count": 2
+          },
+          {
+            "category_id": "9eaf8891-9647-62fg-c166-g29gd3g02cg9",
+            "category_name": "Exercise",
+            "color": "#2ecc71",
+            "icon": "running",
+            "count": 1
+          }
+        ],
+        "previous_day": "2024-01-14",
+        "next_day": "2024-01-16",
+        "generated_at": "2024-01-15T18:00:00-05:00"
+      }
+    }
+  }
+}

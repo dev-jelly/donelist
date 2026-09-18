@@ -4,130 +4,162 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
-
-// EventType represents the type of webhook event
-type EventType string
 
 const (
-	EventCheckinCreated   EventType = "checkin.created"
-	EventCheckinUpdated   EventType = "checkin.updated"
-	EventCheckinDeleted   EventType = "checkin.deleted"
-	EventCategoryCreated  EventType = "category.created"
-	EventCategoryUpdated  EventType = "category.updated"
-	EventCategoryDeleted  EventType = "category.deleted"
-	EventUserUpdated      EventType = "user.updated"
-	EventSubscriptionChanged EventType = "subscription.changed"
+	// Task types
+	TypeWebhookDelivery = "webhook:delivery"
+	TypeWebhookCleanup  = "webhook:cleanup"
+
+	// Retry configuration
+	MaxRetries           = 5
+	InitialRetryDelay    = 1 * time.Minute
+	MaxRetryDelay        = 1 * time.Hour
+	DeliveryTimeout      = 30 * time.Second
+	CleanupRetentionDays = 30
 )
 
-// Webhook represents a webhook configuration
-type Webhook struct {
-	ID        uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey"`
-	UserID    uuid.UUID  `json:"user_id" gorm:"type:uuid;index"`
-	Name      string     `json:"name"`
-	URL       string     `json:"url"`
-	Secret    string     `json:"-" gorm:"column:secret"` // Used for HMAC signature
-	Events    []string   `json:"events" gorm:"type:jsonb"`
-	Active    bool       `json:"active"`
-	Headers   map[string]string `json:"headers" gorm:"type:jsonb"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"index"`
-
-	// Statistics
-	LastTriggeredAt *time.Time `json:"last_triggered_at,omitempty"`
-	TotalDeliveries int        `json:"total_deliveries"`
-	FailedDeliveries int       `json:"failed_deliveries"`
-}
-
-// TableName returns the table name for Webhook
-func (Webhook) TableName() string {
-	return "webhooks"
-}
-
-// WebhookDelivery represents a webhook delivery attempt
-type WebhookDelivery struct {
-	ID         uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey"`
-	WebhookID  uuid.UUID  `json:"webhook_id" gorm:"type:uuid;index"`
-	EventType  EventType  `json:"event_type"`
-	EventID    string     `json:"event_id"`
-	Payload    json.RawMessage `json:"payload" gorm:"type:jsonb"`
-	Status     DeliveryStatus  `json:"status"`
-	Attempts   int        `json:"attempts"`
-	StatusCode *int       `json:"status_code,omitempty"`
-	Response   *string    `json:"response,omitempty" gorm:"type:text"`
-	Error      *string    `json:"error,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
-	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
-}
-
-// TableName returns the table name for WebhookDelivery
-func (WebhookDelivery) TableName() string {
-	return "webhook_deliveries"
-}
-
-// DeliveryStatus represents the status of webhook delivery
-type DeliveryStatus string
-
-const (
-	StatusPending   DeliveryStatus = "pending"
-	StatusDelivered DeliveryStatus = "delivered"
-	StatusFailed    DeliveryStatus = "failed"
-	StatusRetrying  DeliveryStatus = "retrying"
-	StatusSkipped   DeliveryStatus = "skipped"
-)
-
-// Service handles webhook operations
+// Service handles webhook operations with Asynq job queue
 type Service struct {
-	db         *gorm.DB
+	repo       *Repository
 	httpClient *http.Client
 	logger     *zap.Logger
-	queue      chan *WebhookDelivery
+	asynqClient *asynq.Client
+	asynqServer *asynq.Server
 }
 
-// NewService creates a new webhook service
-func NewService(db *gorm.DB, logger *zap.Logger) *Service {
-	service := &Service{
-		db: db,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		logger: logger,
-		queue:  make(chan *WebhookDelivery, 1000),
+// NewService creates a new webhook service with Asynq
+// Concurrency is dynamically calculated based on CPU cores for optimal performance
+func NewService(repo *Repository, redisAddr string, logger *zap.Logger) *Service {
+	redisOpt := asynq.RedisClientOpt{Addr: redisAddr}
+
+	// Calculate concurrency based on CPU cores
+	// Webhook delivery is I/O bound, so we can have more workers than CPU cores
+	numCPU := runtime.NumCPU()
+	concurrency := numCPU * 10 // 10 workers per core for I/O-bound tasks
+
+	// Apply min/max limits
+	if concurrency < 20 {
+		concurrency = 20 // Minimum 20 workers
+	}
+	if concurrency > 200 {
+		concurrency = 200 // Maximum 200 workers to prevent resource exhaustion
 	}
 
-	// Start background workers
-	go service.processDeliveryQueue()
-	go service.processRetries()
+	logger.Info("Initializing webhook service",
+		zap.Int("cpu_cores", numCPU),
+		zap.Int("worker_concurrency", concurrency),
+	)
 
-	return service
+	return &Service{
+		repo: repo,
+		// HTTP client with connection pooling for better performance
+		httpClient: &http.Client{
+			Timeout: DeliveryTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,              // Total idle connections
+				MaxIdleConnsPerHost: 20,               // Per-host idle connections
+				IdleConnTimeout:     90 * time.Second, // Keep connections alive
+				TLSHandshakeTimeout: 10 * time.Second,
+				DisableKeepAlives:   false,            // Enable keep-alive
+				ForceAttemptHTTP2:   true,             // Use HTTP/2 when possible
+			},
+		},
+		logger:      logger,
+		asynqClient: asynq.NewClient(redisOpt),
+		asynqServer: asynq.NewServer(
+			redisOpt,
+			asynq.Config{
+				Concurrency: concurrency, // Dynamic concurrency based on CPU
+				Queues: map[string]int{
+					"critical": 7, // 70% of workers
+					"default":  2, // 20% of workers
+					"low":      1, // 10% of workers
+				},
+				StrictPriority: true, // Ensure critical tasks get priority
+				RetryDelayFunc: exponentialBackoff,
+				ErrorHandler: asynq.ErrorHandlerFunc(func(ctx context.Context, task *asynq.Task, err error) {
+					logger.Error("Task failed",
+						zap.String("type", task.Type()),
+						zap.Error(err),
+					)
+				}),
+			},
+		),
+	}
+}
+
+// exponentialBackoff calculates retry delay with exponential backoff
+func exponentialBackoff(n int, e error, t *asynq.Task) time.Duration {
+	// exponential: 1m, 2m, 4m, 8m, 16m, capped at 1h
+	delay := time.Duration(math.Pow(2, float64(n))) * InitialRetryDelay
+	if delay > MaxRetryDelay {
+		delay = MaxRetryDelay
+	}
+	return delay
+}
+
+// Start starts the Asynq server and background workers
+func (s *Service) Start() error {
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(TypeWebhookDelivery, s.handleDeliveryTask)
+	mux.HandleFunc(TypeWebhookCleanup, s.handleCleanupTask)
+
+	go func() {
+		if err := s.asynqServer.Start(mux); err != nil {
+			s.logger.Fatal("Failed to start webhook worker", zap.Error(err))
+		}
+	}()
+
+	s.logger.Info("Webhook service started")
+	return nil
+}
+
+// Stop gracefully stops the webhook service
+func (s *Service) Stop() error {
+	s.asynqServer.Shutdown()
+	s.asynqClient.Close()
+	s.logger.Info("Webhook service stopped")
+	return nil
 }
 
 // CreateWebhook creates a new webhook
-func (s *Service) CreateWebhook(ctx context.Context, webhook *Webhook) error {
-	webhook.ID = uuid.New()
-	webhook.CreatedAt = time.Now()
-	webhook.UpdatedAt = time.Now()
+func (s *Service) CreateWebhook(ctx context.Context, req *CreateWebhookRequest, userID uuid.UUID) (*Webhook, error) {
+	webhook := &Webhook{
+		ID:      uuid.New(),
+		UserID:  userID,
+		Name:    req.Name,
+		URL:     req.URL,
+		Events:  req.Events,
+		Active:  req.Active,
+		Headers: req.Headers,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
 
 	// Generate secret if not provided
-	if webhook.Secret == "" {
+	if req.Secret != "" {
+		webhook.Secret = req.Secret
+	} else {
 		webhook.Secret = s.generateSecret()
 	}
 
-	if err := s.db.WithContext(ctx).Create(webhook).Error; err != nil {
-		return fmt.Errorf("failed to create webhook: %w", err)
+	if err := s.repo.CreateWebhook(ctx, webhook); err != nil {
+		return nil, fmt.Errorf("failed to create webhook: %w", err)
 	}
 
 	s.logger.Info("Webhook created",
@@ -136,76 +168,81 @@ func (s *Service) CreateWebhook(ctx context.Context, webhook *Webhook) error {
 		zap.Strings("events", webhook.Events),
 	)
 
-	return nil
+	return webhook, nil
 }
 
 // UpdateWebhook updates an existing webhook
-func (s *Service) UpdateWebhook(ctx context.Context, webhook *Webhook) error {
-	webhook.UpdatedAt = time.Now()
-
-	if err := s.db.WithContext(ctx).Save(webhook).Error; err != nil {
-		return fmt.Errorf("failed to update webhook: %w", err)
+func (s *Service) UpdateWebhook(ctx context.Context, webhookID, userID uuid.UUID, req *UpdateWebhookRequest) (*Webhook, error) {
+	webhook, err := s.repo.GetWebhookByIDAndUser(ctx, webhookID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("webhook not found: %w", err)
 	}
 
-	return nil
+	if req.Name != nil {
+		webhook.Name = *req.Name
+	}
+	if req.URL != nil {
+		webhook.URL = *req.URL
+	}
+	if req.Events != nil {
+		webhook.Events = req.Events
+	}
+	if req.Active != nil {
+		webhook.Active = *req.Active
+	}
+	if req.Headers != nil {
+		webhook.Headers = req.Headers
+	}
+
+	webhook.UpdatedAt = time.Now()
+
+	if err := s.repo.UpdateWebhook(ctx, webhook); err != nil {
+		return nil, fmt.Errorf("failed to update webhook: %w", err)
+	}
+
+	s.logger.Info("Webhook updated", zap.String("id", webhook.ID.String()))
+	return webhook, nil
 }
 
 // DeleteWebhook soft deletes a webhook
-func (s *Service) DeleteWebhook(ctx context.Context, webhookID uuid.UUID) error {
-	now := time.Now()
-	err := s.db.WithContext(ctx).
-		Model(&Webhook{}).
-		Where("id = ?", webhookID).
-		Update("deleted_at", now).Error
-
+func (s *Service) DeleteWebhook(ctx context.Context, webhookID, userID uuid.UUID) error {
+	// Verify ownership
+	_, err := s.repo.GetWebhookByIDAndUser(ctx, webhookID, userID)
 	if err != nil {
+		return fmt.Errorf("webhook not found: %w", err)
+	}
+
+	if err := s.repo.DeleteWebhook(ctx, webhookID); err != nil {
 		return fmt.Errorf("failed to delete webhook: %w", err)
 	}
 
+	s.logger.Info("Webhook deleted", zap.String("id", webhookID.String()))
 	return nil
 }
 
 // GetWebhook gets a webhook by ID
-func (s *Service) GetWebhook(ctx context.Context, webhookID uuid.UUID) (*Webhook, error) {
-	var webhook Webhook
-	err := s.db.WithContext(ctx).
-		Where("id = ? AND deleted_at IS NULL", webhookID).
-		First(&webhook).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &webhook, nil
+func (s *Service) GetWebhook(ctx context.Context, webhookID, userID uuid.UUID) (*Webhook, error) {
+	return s.repo.GetWebhookByIDAndUser(ctx, webhookID, userID)
 }
 
 // ListWebhooks lists webhooks for a user
 func (s *Service) ListWebhooks(ctx context.Context, userID uuid.UUID) ([]*Webhook, error) {
-	var webhooks []*Webhook
-	err := s.db.WithContext(ctx).
-		Where("user_id = ? AND deleted_at IS NULL", userID).
-		Find(&webhooks).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	return webhooks, nil
+	return s.repo.ListWebhooksByUser(ctx, userID)
 }
 
-// TriggerWebhook triggers webhook for an event
-func (s *Service) TriggerWebhook(ctx context.Context, eventType EventType, userID uuid.UUID, payload interface{}) error {
+// TriggerEvent triggers webhooks for an event
+func (s *Service) TriggerEvent(ctx context.Context, eventType EventType, userID uuid.UUID, payload interface{}) error {
 	// Get active webhooks for this event
-	webhooks, err := s.getWebhooksForEvent(ctx, userID, eventType)
+	webhooks, err := s.repo.GetActiveWebhooksForEvent(ctx, userID, eventType)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get webhooks: %w", err)
 	}
 
 	if len(webhooks) == 0 {
 		return nil // No webhooks to trigger
 	}
 
-	// Create payload
+	// Marshal payload
 	payloadData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal payload: %w", err)
@@ -225,7 +262,7 @@ func (s *Service) TriggerWebhook(ctx context.Context, eventType EventType, userI
 		}
 
 		// Save delivery
-		if err := s.db.WithContext(ctx).Create(delivery).Error; err != nil {
+		if err := s.repo.CreateDelivery(ctx, delivery); err != nil {
 			s.logger.Error("Failed to create webhook delivery",
 				zap.Error(err),
 				zap.String("webhook_id", webhook.ID.String()),
@@ -233,65 +270,81 @@ func (s *Service) TriggerWebhook(ctx context.Context, eventType EventType, userI
 			continue
 		}
 
-		// Queue for delivery
-		select {
-		case s.queue <- delivery:
-		default:
-			// Queue is full, process synchronously
-			go s.deliverWebhook(webhook, delivery)
+		// Enqueue delivery task
+		if err := s.enqueueDelivery(delivery.ID); err != nil {
+			s.logger.Error("Failed to enqueue webhook delivery",
+				zap.Error(err),
+				zap.String("delivery_id", delivery.ID.String()),
+			)
 		}
 	}
 
 	return nil
 }
 
-// getWebhooksForEvent gets webhooks subscribed to an event
-func (s *Service) getWebhooksForEvent(ctx context.Context, userID uuid.UUID, eventType EventType) ([]*Webhook, error) {
-	var webhooks []*Webhook
-	err := s.db.WithContext(ctx).
-		Where("user_id = ? AND active = ? AND deleted_at IS NULL", userID, true).
-		Where("events @> ?", fmt.Sprintf(`["%s"]`, eventType)).
-		Find(&webhooks).Error
-
+// enqueueDelivery enqueues a webhook delivery task
+func (s *Service) enqueueDelivery(deliveryID uuid.UUID) error {
+	payload, err := json.Marshal(map[string]string{
+		"delivery_id": deliveryID.String(),
+	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	// Filter webhooks that include this event or "*" (all events)
-	var filtered []*Webhook
-	for _, webhook := range webhooks {
-		for _, event := range webhook.Events {
-			if event == string(eventType) || event == "*" {
-				filtered = append(filtered, webhook)
-				break
-			}
-		}
-	}
+	task := asynq.NewTask(TypeWebhookDelivery, payload,
+		asynq.MaxRetry(MaxRetries),
+		asynq.Queue("default"),
+		asynq.Timeout(DeliveryTimeout),
+	)
 
-	return filtered, nil
+	_, err = s.asynqClient.Enqueue(task)
+	return err
 }
 
-// processDeliveryQueue processes queued webhook deliveries
-func (s *Service) processDeliveryQueue() {
-	for delivery := range s.queue {
-		// Get webhook
-		var webhook Webhook
-		err := s.db.Where("id = ?", delivery.WebhookID).First(&webhook).Error
-		if err != nil {
-			s.logger.Error("Failed to get webhook for delivery",
-				zap.Error(err),
-				zap.String("delivery_id", delivery.ID.String()),
-			)
-			continue
-		}
-
-		// Deliver webhook
-		s.deliverWebhook(&webhook, delivery)
+// handleDeliveryTask handles webhook delivery task
+func (s *Service) handleDeliveryTask(ctx context.Context, task *asynq.Task) error {
+	var payload map[string]string
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return fmt.Errorf("invalid payload: %w", err)
 	}
+
+	deliveryID, err := uuid.Parse(payload["delivery_id"])
+	if err != nil {
+		return fmt.Errorf("invalid delivery_id: %w", err)
+	}
+
+	// Get delivery
+	delivery, err := s.repo.GetDeliveryByID(ctx, deliveryID)
+	if err != nil {
+		return fmt.Errorf("delivery not found: %w", err)
+	}
+
+	// Get webhook
+	webhook, err := s.repo.GetWebhookByID(ctx, delivery.WebhookID)
+	if err != nil {
+		return fmt.Errorf("webhook not found: %w", err)
+	}
+
+	// Skip if webhook is inactive
+	if !webhook.Active {
+		delivery.Status = StatusSkipped
+		s.repo.UpdateDelivery(ctx, delivery)
+		return nil
+	}
+
+	// Deliver webhook
+	startTime := time.Now()
+	err = s.deliverWebhook(ctx, webhook, delivery)
+	duration := time.Since(startTime)
+
+	// Log event
+	s.logDeliveryAttempt(ctx, delivery, int(duration.Milliseconds()))
+
+	return err
 }
 
 // deliverWebhook delivers a webhook
-func (s *Service) deliverWebhook(webhook *Webhook, delivery *WebhookDelivery) {
+func (s *Service) deliverWebhook(ctx context.Context, webhook *Webhook, delivery *WebhookDelivery) error {
 	delivery.Attempts++
 
 	// Create request payload
@@ -305,23 +358,22 @@ func (s *Service) deliverWebhook(webhook *Webhook, delivery *WebhookDelivery) {
 
 	payloadBytes, err := json.Marshal(eventPayload)
 	if err != nil {
-		s.handleDeliveryError(delivery, fmt.Errorf("failed to marshal payload: %w", err))
-		return
+		return s.handleDeliveryError(ctx, delivery, webhook, fmt.Errorf("failed to marshal payload: %w", err))
 	}
 
 	// Create request
-	req, err := http.NewRequest("POST", webhook.URL, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", webhook.URL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
-		s.handleDeliveryError(delivery, fmt.Errorf("failed to create request: %w", err))
-		return
+		return s.handleDeliveryError(ctx, delivery, webhook, fmt.Errorf("failed to create request: %w", err))
 	}
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "DoneList-Webhook/1.0")
+	req.Header.Set("User-Agent", "DoneList-Webhook/2.0")
 	req.Header.Set("X-Webhook-Event", string(delivery.EventType))
 	req.Header.Set("X-Webhook-Event-ID", delivery.EventID)
 	req.Header.Set("X-Webhook-Delivery-ID", delivery.ID.String())
+	req.Header.Set("X-Webhook-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
 
 	// Add custom headers
 	for key, value := range webhook.Headers {
@@ -329,21 +381,19 @@ func (s *Service) deliverWebhook(webhook *Webhook, delivery *WebhookDelivery) {
 	}
 
 	// Add HMAC signature
-	if webhook.Secret != "" {
-		signature := s.calculateSignature(payloadBytes, webhook.Secret)
-		req.Header.Set("X-Webhook-Signature", signature)
-	}
+	signature := s.calculateSignature(payloadBytes, webhook.Secret)
+	req.Header.Set("X-Webhook-Signature", signature)
+	req.Header.Set("X-Webhook-Signature-256", signature) // Alternative header name
 
 	// Send request
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		s.handleDeliveryError(delivery, fmt.Errorf("request failed: %w", err))
-		return
+		return s.handleDeliveryError(ctx, delivery, webhook, fmt.Errorf("request failed: %w", err))
 	}
 	defer resp.Body.Close()
 
 	// Read response
-	responseBody, _ := io.ReadAll(resp.Body)
+	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024)) // Limit to 1MB
 	responseStr := string(responseBody)
 	delivery.StatusCode = &resp.StatusCode
 	delivery.Response = &responseStr
@@ -356,12 +406,7 @@ func (s *Service) deliverWebhook(webhook *Webhook, delivery *WebhookDelivery) {
 		delivery.DeliveredAt = &now
 
 		// Update webhook stats
-		s.db.Model(&Webhook{}).
-			Where("id = ?", webhook.ID).
-			Updates(map[string]interface{}{
-				"last_triggered_at": now,
-				"total_deliveries":  gorm.Expr("total_deliveries + 1"),
-			})
+		s.repo.UpdateWebhookStats(ctx, webhook.ID, true)
 
 		s.logger.Info("Webhook delivered successfully",
 			zap.String("webhook_id", webhook.ID.String()),
@@ -369,70 +414,177 @@ func (s *Service) deliverWebhook(webhook *Webhook, delivery *WebhookDelivery) {
 			zap.Int("status_code", resp.StatusCode),
 		)
 	} else {
-		// Failed
-		s.handleDeliveryError(delivery, fmt.Errorf("received status code %d", resp.StatusCode))
+		return s.handleDeliveryError(ctx, delivery, webhook, fmt.Errorf("received status code %d", resp.StatusCode))
 	}
 
 	// Update delivery
-	s.db.Save(delivery)
+	return s.repo.UpdateDelivery(ctx, delivery)
 }
 
 // handleDeliveryError handles webhook delivery errors
-func (s *Service) handleDeliveryError(delivery *WebhookDelivery, err error) {
+func (s *Service) handleDeliveryError(ctx context.Context, delivery *WebhookDelivery, webhook *Webhook, err error) error {
 	errStr := err.Error()
 	delivery.Error = &errStr
 
 	// Determine if we should retry
-	if delivery.Attempts < 3 {
+	if delivery.Attempts < MaxRetries {
 		delivery.Status = StatusRetrying
-		nextRetry := time.Now().Add(time.Duration(delivery.Attempts*delivery.Attempts) * time.Minute)
+		nextRetry := time.Now().Add(exponentialBackoff(delivery.Attempts, err, nil))
 		delivery.NextRetryAt = &nextRetry
 
 		s.logger.Warn("Webhook delivery failed, will retry",
 			zap.String("delivery_id", delivery.ID.String()),
 			zap.Int("attempts", delivery.Attempts),
+			zap.Time("next_retry", nextRetry),
 			zap.Error(err),
 		)
-	} else {
-		delivery.Status = StatusFailed
 
-		// Update webhook failed deliveries count
-		s.db.Model(&Webhook{}).
-			Where("id = ?", delivery.WebhookID).
-			Update("failed_deliveries", gorm.Expr("failed_deliveries + 1"))
+		s.repo.UpdateDelivery(ctx, delivery)
+		return err // Return error to trigger Asynq retry
+	}
 
-		s.logger.Error("Webhook delivery failed permanently",
+	// Max retries exceeded, move to DLQ
+	delivery.Status = StatusFailed
+	s.repo.UpdateDelivery(ctx, delivery)
+
+	// Update webhook stats
+	s.repo.UpdateWebhookStats(ctx, webhook.ID, false)
+
+	// Move to dead letter queue
+	if dlqErr := s.repo.MoveToDLQ(ctx, delivery, webhook); dlqErr != nil {
+		s.logger.Error("Failed to move delivery to DLQ",
 			zap.String("delivery_id", delivery.ID.String()),
-			zap.Int("attempts", delivery.Attempts),
-			zap.Error(err),
+			zap.Error(dlqErr),
 		)
 	}
 
-	s.db.Save(delivery)
+	s.logger.Error("Webhook delivery failed permanently",
+		zap.String("delivery_id", delivery.ID.String()),
+		zap.Int("attempts", delivery.Attempts),
+		zap.Error(err),
+	)
+
+	return nil // Don't return error to prevent further retries
 }
 
-// processRetries processes webhook retries
-func (s *Service) processRetries() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
+// logDeliveryAttempt logs a delivery attempt
+func (s *Service) logDeliveryAttempt(ctx context.Context, delivery *WebhookDelivery, durationMs int) {
+	// This is automatically handled by the database trigger
+	// But we can add additional metrics here if needed
+}
 
-	for range ticker.C {
-		var deliveries []*WebhookDelivery
-		s.db.Where("status = ? AND next_retry_at <= ?", StatusRetrying, time.Now()).
-			Limit(100).
-			Find(&deliveries)
+// GetDeliveries gets webhook deliveries
+func (s *Service) GetDeliveries(ctx context.Context, webhookID, userID uuid.UUID, limit int) ([]*WebhookDelivery, error) {
+	// Verify webhook ownership
+	_, err := s.repo.GetWebhookByIDAndUser(ctx, webhookID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("webhook not found: %w", err)
+	}
 
-		for _, delivery := range deliveries {
-			// Get webhook
-			var webhook Webhook
-			if err := s.db.Where("id = ?", delivery.WebhookID).First(&webhook).Error; err != nil {
-				continue
-			}
+	return s.repo.ListDeliveriesByWebhook(ctx, webhookID, limit)
+}
 
-			// Retry delivery
-			go s.deliverWebhook(&webhook, delivery)
+// GetDLQEntries gets dead letter queue entries
+func (s *Service) GetDLQEntries(ctx context.Context, webhookID, userID uuid.UUID, limit int) ([]*WebhookDLQ, error) {
+	// Verify webhook ownership if webhookID is provided
+	if webhookID != uuid.Nil {
+		_, err := s.repo.GetWebhookByIDAndUser(ctx, webhookID, userID)
+		if err != nil {
+			return nil, fmt.Errorf("webhook not found: %w", err)
 		}
 	}
+
+	return s.repo.GetDLQEntries(ctx, webhookID, limit)
+}
+
+// ResendDelivery resends a failed delivery
+func (s *Service) ResendDelivery(ctx context.Context, deliveryID, userID uuid.UUID) error {
+	delivery, err := s.repo.GetDeliveryByID(ctx, deliveryID)
+	if err != nil {
+		return fmt.Errorf("delivery not found: %w", err)
+	}
+
+	// Verify webhook ownership
+	_, err = s.repo.GetWebhookByIDAndUser(ctx, delivery.WebhookID, userID)
+	if err != nil {
+		return fmt.Errorf("webhook not found: %w", err)
+	}
+
+	// Reset delivery status
+	delivery.Status = StatusPending
+	delivery.Attempts = 0
+	delivery.Error = nil
+	delivery.NextRetryAt = nil
+
+	if err := s.repo.UpdateDelivery(ctx, delivery); err != nil {
+		return fmt.Errorf("failed to update delivery: %w", err)
+	}
+
+	// Enqueue delivery
+	return s.enqueueDelivery(delivery.ID)
+}
+
+// TestWebhook sends a test webhook
+func (s *Service) TestWebhook(ctx context.Context, webhookID, userID uuid.UUID) error {
+	webhook, err := s.GetWebhook(ctx, webhookID, userID)
+	if err != nil {
+		return err
+	}
+
+	testPayload := map[string]interface{}{
+		"test":      true,
+		"message":   "This is a test webhook from DoneList",
+		"timestamp": time.Now().Unix(),
+	}
+
+	return s.TriggerEvent(ctx, "test.webhook", webhook.UserID, testPayload)
+}
+
+// GetWebhookStats gets aggregated statistics for a webhook
+func (s *Service) GetWebhookStats(ctx context.Context, webhookID, userID uuid.UUID, since time.Time) (*WebhookStats, error) {
+	// Verify webhook ownership
+	_, err := s.repo.GetWebhookByIDAndUser(ctx, webhookID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("webhook not found: %w", err)
+	}
+
+	return s.repo.GetWebhookStats(ctx, webhookID, since)
+}
+
+// handleCleanupTask handles periodic cleanup of old records
+func (s *Service) handleCleanupTask(ctx context.Context, task *asynq.Task) error {
+	cutoff := time.Now().AddDate(0, 0, -CleanupRetentionDays)
+
+	// Cleanup old deliveries
+	deliveriesDeleted, err := s.repo.CleanupOldDeliveries(ctx, cutoff)
+	if err != nil {
+		s.logger.Error("Failed to cleanup old deliveries", zap.Error(err))
+	} else {
+		s.logger.Info("Cleaned up old deliveries", zap.Int64("count", deliveriesDeleted))
+	}
+
+	// Cleanup old event logs
+	logsDeleted, err := s.repo.CleanupOldEventLogs(ctx, cutoff)
+	if err != nil {
+		s.logger.Error("Failed to cleanup old event logs", zap.Error(err))
+	} else {
+		s.logger.Info("Cleaned up old event logs", zap.Int64("count", logsDeleted))
+	}
+
+	return nil
+}
+
+// ScheduleCleanup schedules periodic cleanup
+func (s *Service) ScheduleCleanup() error {
+	task := asynq.NewTask(TypeWebhookCleanup, nil,
+		asynq.Queue("low"),
+	)
+
+	// Schedule daily cleanup at 3 AM
+	_, err := s.asynqClient.Enqueue(task,
+		asynq.ProcessIn(24*time.Hour),
+	)
+	return err
 }
 
 // calculateSignature calculates HMAC-SHA256 signature
@@ -442,70 +594,15 @@ func (s *Service) calculateSignature(payload []byte, secret string) string {
 	return "sha256=" + hex.EncodeToString(h.Sum(nil))
 }
 
+// VerifySignature verifies HMAC signature
+func (s *Service) VerifySignature(payload []byte, signature, secret string) bool {
+	expectedSignature := s.calculateSignature(payload, secret)
+	return hmac.Equal([]byte(signature), []byte(expectedSignature))
+}
+
 // generateSecret generates a random webhook secret
 func (s *Service) generateSecret() string {
-	return uuid.New().String()
-}
-
-// WebhookPayload represents the payload sent to webhooks
-type WebhookPayload struct {
-	Event     string          `json:"event"`
-	EventID   string          `json:"event_id"`
-	Webhook   string          `json:"webhook"`
-	Timestamp int64           `json:"timestamp"`
-	Data      json.RawMessage `json:"data"`
-}
-
-// GetDeliveries gets webhook deliveries
-func (s *Service) GetDeliveries(ctx context.Context, webhookID uuid.UUID, limit int) ([]*WebhookDelivery, error) {
-	var deliveries []*WebhookDelivery
-	err := s.db.WithContext(ctx).
-		Where("webhook_id = ?", webhookID).
-		Order("created_at DESC").
-		Limit(limit).
-		Find(&deliveries).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	return deliveries, nil
-}
-
-// ResendDelivery resends a webhook delivery
-func (s *Service) ResendDelivery(ctx context.Context, deliveryID uuid.UUID) error {
-	var delivery WebhookDelivery
-	if err := s.db.WithContext(ctx).Where("id = ?", deliveryID).First(&delivery).Error; err != nil {
-		return err
-	}
-
-	var webhook Webhook
-	if err := s.db.WithContext(ctx).Where("id = ?", delivery.WebhookID).First(&webhook).Error; err != nil {
-		return err
-	}
-
-	// Reset delivery status
-	delivery.Status = StatusPending
-	delivery.Attempts = 0
-
-	// Queue for delivery
-	s.queue <- &delivery
-
-	return nil
-}
-
-// TestWebhook sends a test webhook
-func (s *Service) TestWebhook(ctx context.Context, webhookID uuid.UUID) error {
-	webhook, err := s.GetWebhook(ctx, webhookID)
-	if err != nil {
-		return err
-	}
-
-	testPayload := map[string]interface{}{
-		"test": true,
-		"message": "This is a test webhook from DoneList",
-		"timestamp": time.Now().Unix(),
-	}
-
-	return s.TriggerWebhook(ctx, "test.webhook", webhook.UserID, testPayload)
+	b := make([]byte, 32)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }

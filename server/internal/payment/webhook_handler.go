@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dev-jelly/donelist/internal/subscription"
 	"github.com/google/uuid"
 	"github.com/stripe/stripe-go/v79"
 	"go.uber.org/zap"
@@ -13,17 +14,17 @@ import (
 
 // WebhookHandler handles Stripe webhook events
 type WebhookHandler struct {
-	service *Service
-	logger  *zap.Logger
-	// Add your subscription repository here
-	// subscriptionRepo subscription.Repository
+	service          *Service
+	subscriptionRepo *subscription.Repository
+	logger           *zap.Logger
 }
 
 // NewWebhookHandler creates a new webhook handler
-func NewWebhookHandler(service *Service, logger *zap.Logger) *WebhookHandler {
+func NewWebhookHandler(service *Service, subscriptionRepo *subscription.Repository, logger *zap.Logger) *WebhookHandler {
 	return &WebhookHandler{
-		service: service,
-		logger:  logger,
+		service:          service,
+		subscriptionRepo: subscriptionRepo,
+		logger:           logger,
 	}
 }
 
@@ -93,19 +94,39 @@ func (h *WebhookHandler) handleSubscriptionCreated(ctx context.Context, event *s
 		zap.String("status", string(stripeSubscription.Status)),
 	)
 
-	// TODO: Create subscription record in database
-	// Example:
-	// sub := &subscription.Subscription{
-	//     ID:                   uuid.New(),
-	//     UserID:               userID,
-	//     PlanID:               planID,
-	//     Status:               MapStripeStatusToSubscriptionStatus(stripeSubscription.Status),
-	//     CurrentPeriodStart:   time.Unix(stripeSubscription.CurrentPeriodStart, 0),
-	//     CurrentPeriodEnd:     time.Unix(stripeSubscription.CurrentPeriodEnd, 0),
-	//     StripeCustomerID:     &stripeSubscription.Customer.ID,
-	//     StripeSubscriptionID: &stripeSubscription.ID,
-	// }
-	// return h.subscriptionRepo.Create(ctx, sub)
+	// Create subscription record in database
+	sub := &subscription.Subscription{
+		ID:                   uuid.New(),
+		UserID:               userID,
+		PlanID:               planID,
+		Status:               MapStripeStatusToSubscriptionStatus(stripeSubscription.Status),
+		CurrentPeriodStart:   time.Unix(stripeSubscription.CurrentPeriodStart, 0),
+		CurrentPeriodEnd:     time.Unix(stripeSubscription.CurrentPeriodEnd, 0),
+		CancelAtPeriodEnd:    stripeSubscription.CancelAtPeriodEnd,
+		StripeCustomerID:     &stripeSubscription.Customer.ID,
+		StripeSubscriptionID: &stripeSubscription.ID,
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+	}
+
+	// Handle trial period
+	if stripeSubscription.TrialStart > 0 {
+		trialStart := time.Unix(stripeSubscription.TrialStart, 0)
+		sub.TrialStart = &trialStart
+	}
+	if stripeSubscription.TrialEnd > 0 {
+		trialEnd := time.Unix(stripeSubscription.TrialEnd, 0)
+		sub.TrialEnd = &trialEnd
+	}
+
+	if err := h.subscriptionRepo.CreateSubscription(ctx, sub); err != nil {
+		return fmt.Errorf("failed to create subscription: %w", err)
+	}
+
+	// Log subscription event
+	if err := h.subscriptionRepo.LogSubscriptionEvent(ctx, sub.ID, subscription.EventTypeCreated, nil, sub, "Created via Stripe webhook"); err != nil {
+		h.logger.Warn("Failed to log subscription event", zap.Error(err))
+	}
 
 	return nil
 }
@@ -123,12 +144,58 @@ func (h *WebhookHandler) handleSubscriptionUpdated(ctx context.Context, event *s
 		zap.Bool("cancel_at_period_end", stripeSubscription.CancelAtPeriodEnd),
 	)
 
-	// TODO: Update subscription record in database
-	// Example:
-	// return h.subscriptionRepo.UpdateByStripeID(ctx, stripeSubscription.ID, &subscription.UpdateSubscriptionParams{
-	//     Status:            MapStripeStatusToSubscriptionStatus(stripeSubscription.Status),
-	//     CancelAtPeriodEnd: &stripeSubscription.CancelAtPeriodEnd,
-	// })
+	// Get existing subscription
+	existingSub, err := h.subscriptionRepo.GetSubscriptionByStripeID(ctx, stripeSubscription.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get existing subscription: %w", err)
+	}
+
+	// Store previous state for event logging
+	previousState := *existingSub
+
+	// Update subscription fields
+	existingSub.Status = MapStripeStatusToSubscriptionStatus(stripeSubscription.Status)
+	existingSub.CurrentPeriodStart = time.Unix(stripeSubscription.CurrentPeriodStart, 0)
+	existingSub.CurrentPeriodEnd = time.Unix(stripeSubscription.CurrentPeriodEnd, 0)
+	existingSub.CancelAtPeriodEnd = stripeSubscription.CancelAtPeriodEnd
+	existingSub.UpdatedAt = time.Now()
+
+	// Handle trial updates
+	if stripeSubscription.TrialStart > 0 {
+		trialStart := time.Unix(stripeSubscription.TrialStart, 0)
+		existingSub.TrialStart = &trialStart
+	}
+	if stripeSubscription.TrialEnd > 0 {
+		trialEnd := time.Unix(stripeSubscription.TrialEnd, 0)
+		existingSub.TrialEnd = &trialEnd
+	}
+
+	// Handle cancellation
+	if stripeSubscription.CanceledAt > 0 && existingSub.CanceledAt == nil {
+		canceledAt := time.Unix(stripeSubscription.CanceledAt, 0)
+		existingSub.CanceledAt = &canceledAt
+	}
+
+	// Update in database
+	if err := h.subscriptionRepo.UpdateSubscription(ctx, existingSub); err != nil {
+		return fmt.Errorf("failed to update subscription: %w", err)
+	}
+
+	// Log appropriate event
+	eventType := subscription.EventTypeActivated
+	if previousState.Status != existingSub.Status {
+		if existingSub.Status == subscription.StatusCanceled {
+			eventType = subscription.EventTypeCanceled
+		} else if existingSub.Status == subscription.StatusPastDue {
+			eventType = subscription.EventTypePastDue
+		} else if existingSub.Status == subscription.StatusExpired {
+			eventType = subscription.EventTypeExpired
+		}
+	}
+
+	if err := h.subscriptionRepo.LogSubscriptionEvent(ctx, existingSub.ID, eventType, previousState, existingSub, "Updated via Stripe webhook"); err != nil {
+		h.logger.Warn("Failed to log subscription event", zap.Error(err))
+	}
 
 	return nil
 }
@@ -144,12 +211,31 @@ func (h *WebhookHandler) handleSubscriptionDeleted(ctx context.Context, event *s
 		zap.String("subscription_id", stripeSubscription.ID),
 	)
 
-	// TODO: Update subscription status to canceled in database
-	// Example:
-	// status := subscription.StatusCanceled
-	// return h.subscriptionRepo.UpdateByStripeID(ctx, stripeSubscription.ID, &subscription.UpdateSubscriptionParams{
-	//     Status: &status,
-	// })
+	// Get existing subscription
+	existingSub, err := h.subscriptionRepo.GetSubscriptionByStripeID(ctx, stripeSubscription.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get existing subscription: %w", err)
+	}
+
+	// Store previous state
+	previousState := *existingSub
+
+	// Mark as canceled/expired
+	existingSub.Status = subscription.StatusCanceled
+	existingSub.UpdatedAt = time.Now()
+	if existingSub.CanceledAt == nil {
+		now := time.Now()
+		existingSub.CanceledAt = &now
+	}
+
+	if err := h.subscriptionRepo.UpdateSubscription(ctx, existingSub); err != nil {
+		return fmt.Errorf("failed to update subscription: %w", err)
+	}
+
+	// Log event
+	if err := h.subscriptionRepo.LogSubscriptionEvent(ctx, existingSub.ID, subscription.EventTypeCanceled, previousState, existingSub, "Deleted via Stripe webhook"); err != nil {
+		h.logger.Warn("Failed to log subscription event", zap.Error(err))
+	}
 
 	return nil
 }
@@ -186,19 +272,48 @@ func (h *WebhookHandler) handleInvoicePaymentSucceeded(ctx context.Context, even
 		zap.Int64("amount_paid", invoice.AmountPaid),
 	)
 
-	// TODO: Create payment record in database
-	// Example:
-	// payment := &subscription.Payment{
-	//     ID:                    uuid.New(),
-	//     UserID:                userID,
-	//     SubscriptionID:        subscriptionID,
-	//     Amount:                int(invoice.AmountPaid),
-	//     Currency:              string(invoice.Currency),
-	//     Status:                subscription.PaymentStatusSucceeded,
-	//     StripePaymentIntentID: &invoice.PaymentIntent.ID,
-	//     PaidAt:                &paidAt,
-	// }
-	// return h.paymentRepo.Create(ctx, payment)
+	// Get subscription to find user ID
+	if invoice.Subscription == nil {
+		h.logger.Warn("Invoice has no subscription attached, skipping payment record")
+		return nil
+	}
+
+	sub, err := h.subscriptionRepo.GetSubscriptionByStripeID(ctx, invoice.Subscription.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get subscription for payment: %w", err)
+	}
+
+	// Create payment record
+	paidAt := time.Unix(invoice.StatusTransitions.PaidAt, 0)
+	payment := &subscription.Payment{
+		ID:             uuid.New(),
+		UserID:         sub.UserID,
+		SubscriptionID: &sub.ID,
+		Amount:         int(invoice.AmountPaid),
+		Currency:       string(invoice.Currency),
+		Status:         subscription.PaymentStatusSucceeded,
+		PaidAt:         &paidAt,
+		CreatedAt:      time.Now(),
+	}
+
+	if invoice.PaymentIntent != nil {
+		payment.StripePaymentIntentID = &invoice.PaymentIntent.ID
+	}
+	if invoice.Charge != nil {
+		payment.StripeChargeID = &invoice.Charge.ID
+	}
+
+	desc := fmt.Sprintf("Payment for %s subscription", sub.PlanID)
+	payment.Description = &desc
+
+	if err := h.subscriptionRepo.CreatePayment(ctx, payment); err != nil {
+		return fmt.Errorf("failed to create payment record: %w", err)
+	}
+
+	// Log subscription event
+	if err := h.subscriptionRepo.LogSubscriptionEvent(ctx, sub.ID, subscription.EventTypePaymentSucceeded, nil, payment, "Payment succeeded"); err != nil {
+		h.logger.Warn("Failed to log subscription event", zap.Error(err))
+	}
 
 	return nil
 }
@@ -215,16 +330,65 @@ func (h *WebhookHandler) handleInvoicePaymentFailed(ctx context.Context, event *
 		zap.String("subscription_id", invoice.Subscription.ID),
 	)
 
-	// TODO: Update subscription status and send notification
-	// Example:
-	// status := subscription.StatusPastDue
-	// err := h.subscriptionRepo.UpdateByStripeID(ctx, invoice.Subscription.ID, &subscription.UpdateSubscriptionParams{
-	//     Status: &status,
-	// })
-	// if err != nil {
-	//     return err
-	// }
-	// return h.notificationService.SendPaymentFailedNotification(ctx, userID)
+	// Get subscription
+	if invoice.Subscription == nil {
+		h.logger.Warn("Invoice has no subscription attached, skipping")
+		return nil
+	}
+
+	sub, err := h.subscriptionRepo.GetSubscriptionByStripeID(ctx, invoice.Subscription.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get subscription for failed payment: %w", err)
+	}
+
+	// Store previous state
+	previousState := *sub
+
+	// Update subscription to past_due status
+	sub.Status = subscription.StatusPastDue
+	sub.UpdatedAt = time.Now()
+
+	if err := h.subscriptionRepo.UpdateSubscription(ctx, sub); err != nil {
+		return fmt.Errorf("failed to update subscription status: %w", err)
+	}
+
+	// Create failed payment record
+	failedAt := time.Now()
+	failureReason := "Payment failed"
+	if invoice.LastFinalizationError != nil && invoice.LastFinalizationError.Code != "" {
+		failureReason = string(invoice.LastFinalizationError.Code)
+	}
+
+	payment := &subscription.Payment{
+		ID:             uuid.New(),
+		UserID:         sub.UserID,
+		SubscriptionID: &sub.ID,
+		Amount:         int(invoice.AmountDue),
+		Currency:       string(invoice.Currency),
+		Status:         subscription.PaymentStatusFailed,
+		FailedAt:       &failedAt,
+		FailureReason:  &failureReason,
+		CreatedAt:      time.Now(),
+	}
+
+	if invoice.PaymentIntent != nil {
+		payment.StripePaymentIntentID = &invoice.PaymentIntent.ID
+	}
+
+	desc := fmt.Sprintf("Failed payment for %s subscription", sub.PlanID)
+	payment.Description = &desc
+
+	if err := h.subscriptionRepo.CreatePayment(ctx, payment); err != nil {
+		h.logger.Warn("Failed to create failed payment record", zap.Error(err))
+	}
+
+	// Log event
+	if err := h.subscriptionRepo.LogSubscriptionEvent(ctx, sub.ID, subscription.EventTypePaymentFailed, previousState, sub, failureReason); err != nil {
+		h.logger.Warn("Failed to log subscription event", zap.Error(err))
+	}
+
+	// TODO: Send notification to user about payment failure
+	// This should be handled by subtask 10.7
 
 	return nil
 }

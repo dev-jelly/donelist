@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"fmt"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -13,6 +15,7 @@ type Metrics struct {
 	HTTPRequestSize        *prometheus.HistogramVec
 	HTTPResponseSize       *prometheus.HistogramVec
 	HTTPRequestsInFlight   *prometheus.GaugeVec
+	HTTPErrorsTotal        *prometheus.CounterVec // New: HTTP error counter
 
 	// Application-specific metrics
 	CheckinsTotal          *prometheus.CounterVec
@@ -22,6 +25,8 @@ type Metrics struct {
 
 	// Database metrics
 	DBConnectionsTotal     prometheus.Gauge
+	DBConnectionsInUse     prometheus.Gauge // New: Connections in use
+	DBConnectionsIdle      prometheus.Gauge // New: Idle connections
 	DBOperationDuration    *prometheus.HistogramVec
 	DBOperationErrors      *prometheus.CounterVec
 
@@ -29,6 +34,13 @@ type Metrics struct {
 	CacheHits              *prometheus.CounterVec
 	CacheMisses            *prometheus.CounterVec
 	CacheOperationDuration *prometheus.HistogramVec
+
+	// Job Queue metrics
+	JobQueueLength         *prometheus.GaugeVec   // New: Queue length by queue name
+	JobQueueWaitTime       *prometheus.HistogramVec // New: Time jobs wait in queue
+	JobProcessingTime      *prometheus.HistogramVec // New: Job processing duration
+	JobsProcessedTotal     *prometheus.CounterVec // New: Total jobs processed
+	JobsFailedTotal        *prometheus.CounterVec // New: Total failed jobs
 
 	// System metrics
 	HealthCheckStatus      *prometheus.GaugeVec
@@ -47,9 +59,11 @@ func NewMetrics() *Metrics {
 		),
 		HTTPRequestDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "http_request_duration_seconds",
-				Help:    "HTTP request latency in seconds",
-				Buckets: prometheus.DefBuckets,
+				Name: "http_request_duration_seconds",
+				Help: "HTTP request latency in seconds",
+				// Custom buckets optimized for API percentiles (p50, p90, p95, p99)
+				// 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
+				Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 			},
 			[]string{"method", "path"},
 		),
@@ -75,6 +89,13 @@ func NewMetrics() *Metrics {
 				Help: "Current number of HTTP requests being processed",
 			},
 			[]string{"method"},
+		),
+		HTTPErrorsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "http_errors_total",
+				Help: "Total number of HTTP errors by status code",
+			},
+			[]string{"method", "path", "status_code"}, // Limited cardinality: method, path template, status code
 		),
 
 		// Application-specific metrics
@@ -112,11 +133,24 @@ func NewMetrics() *Metrics {
 				Help: "Current number of database connections",
 			},
 		),
+		DBConnectionsInUse: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "db_connections_in_use",
+				Help: "Current number of database connections in use",
+			},
+		),
+		DBConnectionsIdle: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "db_connections_idle",
+				Help: "Current number of idle database connections",
+			},
+		),
 		DBOperationDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "db_operation_duration_seconds",
-				Help:    "Database operation duration in seconds",
-				Buckets: prometheus.DefBuckets,
+				Name: "db_operation_duration_seconds",
+				Help: "Database operation duration in seconds",
+				// DB operations should be faster - 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s
+				Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
 			},
 			[]string{"operation", "table"},
 		),
@@ -145,11 +179,53 @@ func NewMetrics() *Metrics {
 		),
 		CacheOperationDuration: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
-				Name:    "cache_operation_duration_seconds",
-				Help:    "Cache operation duration in seconds",
-				Buckets: prometheus.DefBuckets,
+				Name: "cache_operation_duration_seconds",
+				Help: "Cache operation duration in seconds",
+				// Cache should be very fast - 0.1ms, 0.5ms, 1ms, 5ms, 10ms, 25ms, 50ms, 100ms
+				Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1},
 			},
 			[]string{"operation"},
+		),
+
+		// Job Queue metrics
+		JobQueueLength: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "job_queue_length",
+				Help: "Current number of jobs waiting in queue",
+			},
+			[]string{"queue_name"},
+		),
+		JobQueueWaitTime: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name: "job_queue_wait_time_seconds",
+				Help: "Time jobs spend waiting in queue before processing",
+				// Queue wait times: 100ms, 500ms, 1s, 5s, 10s, 30s, 60s, 120s
+				Buckets: []float64{0.1, 0.5, 1, 5, 10, 30, 60, 120},
+			},
+			[]string{"queue_name", "job_type"},
+		),
+		JobProcessingTime: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name: "job_processing_time_seconds",
+				Help: "Time spent processing jobs",
+				// Processing times: 100ms, 500ms, 1s, 5s, 10s, 30s, 60s, 300s
+				Buckets: []float64{0.1, 0.5, 1, 5, 10, 30, 60, 300},
+			},
+			[]string{"queue_name", "job_type"},
+		),
+		JobsProcessedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "jobs_processed_total",
+				Help: "Total number of jobs processed",
+			},
+			[]string{"queue_name", "job_type", "status"}, // status: success, failed
+		),
+		JobsFailedTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "jobs_failed_total",
+				Help: "Total number of failed jobs",
+			},
+			[]string{"queue_name", "job_type", "error_type"},
 		),
 
 		// System metrics
@@ -201,6 +277,23 @@ func (m *Metrics) SetDBConnections(count int) {
 	m.DBConnectionsTotal.Set(float64(count))
 }
 
+// SetDBConnectionsInUse sets the current number of database connections in use
+func (m *Metrics) SetDBConnectionsInUse(count int) {
+	m.DBConnectionsInUse.Set(float64(count))
+}
+
+// SetDBConnectionsIdle sets the current number of idle database connections
+func (m *Metrics) SetDBConnectionsIdle(count int) {
+	m.DBConnectionsIdle.Set(float64(count))
+}
+
+// UpdateDBPoolStats updates all database pool statistics
+func (m *Metrics) UpdateDBPoolStats(total, inUse, idle int) {
+	m.DBConnectionsTotal.Set(float64(total))
+	m.DBConnectionsInUse.Set(float64(inUse))
+	m.DBConnectionsIdle.Set(float64(idle))
+}
+
 // RecordDBOperation records a database operation
 func (m *Metrics) RecordDBOperation(operation, table string, duration float64, err error) {
 	m.DBOperationDuration.WithLabelValues(operation, table).Observe(duration)
@@ -231,4 +324,34 @@ func (m *Metrics) SetHealthCheckStatus(component string, healthy bool) {
 		status = 1.0
 	}
 	m.HealthCheckStatus.WithLabelValues(component).Set(status)
+}
+
+// RecordHTTPError records an HTTP error
+func (m *Metrics) RecordHTTPError(method, path string, statusCode int) {
+	m.HTTPErrorsTotal.WithLabelValues(method, path, fmt.Sprintf("%d", statusCode)).Inc()
+}
+
+// SetJobQueueLength sets the current queue length for a specific queue
+func (m *Metrics) SetJobQueueLength(queueName string, length int) {
+	m.JobQueueLength.WithLabelValues(queueName).Set(float64(length))
+}
+
+// RecordJobQueueWaitTime records how long a job waited in queue
+func (m *Metrics) RecordJobQueueWaitTime(queueName, jobType string, duration float64) {
+	m.JobQueueWaitTime.WithLabelValues(queueName, jobType).Observe(duration)
+}
+
+// RecordJobProcessingTime records how long a job took to process
+func (m *Metrics) RecordJobProcessingTime(queueName, jobType string, duration float64) {
+	m.JobProcessingTime.WithLabelValues(queueName, jobType).Observe(duration)
+}
+
+// RecordJobProcessed records a processed job with its status
+func (m *Metrics) RecordJobProcessed(queueName, jobType, status string) {
+	m.JobsProcessedTotal.WithLabelValues(queueName, jobType, status).Inc()
+}
+
+// RecordJobFailed records a failed job with error type
+func (m *Metrics) RecordJobFailed(queueName, jobType, errorType string) {
+	m.JobsFailedTotal.WithLabelValues(queueName, jobType, errorType).Inc()
 }

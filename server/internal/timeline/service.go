@@ -111,14 +111,16 @@ type EnhancedDayView struct {
 type Service struct {
 	checkinRepo  *checkin.Repository
 	categoryRepo *category.Repository
+	cache        *CacheService
 	logger       *zap.Logger
 }
 
 // NewService creates a new timeline service
-func NewService(checkinRepo *checkin.Repository, categoryRepo *category.Repository, logger *zap.Logger) *Service {
+func NewService(checkinRepo *checkin.Repository, categoryRepo *category.Repository, cache *CacheService, logger *zap.Logger) *Service {
 	return &Service{
 		checkinRepo:  checkinRepo,
 		categoryRepo: categoryRepo,
+		cache:        cache,
 		logger:       logger,
 	}
 }
@@ -140,7 +142,13 @@ type MonthView struct {
 }
 
 // GetDailyEnhanced retrieves an enhanced daily timeline with time blocks and analytics
+// Supports optional pagination and caching
 func (s *Service) GetDailyEnhanced(ctx context.Context, userID uuid.UUID, date time.Time, blockGranularity int, timezone string) (*EnhancedDayView, error) {
+	return s.GetDailyEnhancedPaginated(ctx, userID, date, blockGranularity, timezone, "", 0)
+}
+
+// GetDailyEnhancedPaginated retrieves an enhanced daily timeline with pagination support
+func (s *Service) GetDailyEnhancedPaginated(ctx context.Context, userID uuid.UUID, date time.Time, blockGranularity int, timezone, cursor string, limit int) (*EnhancedDayView, error) {
 	// Validate block granularity
 	granularity, err := ValidateBlockGranularity(blockGranularity)
 	if err != nil {
@@ -161,6 +169,20 @@ func (s *Service) GetDailyEnhanced(ctx context.Context, userID uuid.UUID, date t
 
 	// Get start and end of day in the specified timezone
 	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, loc)
+	dateStr := startOfDay.Format("2006-01-02")
+
+	// Try to get from cache if caching is enabled
+	if s.cache != nil && cursor == "" && limit == 0 {
+		cacheKey := s.cache.CacheKey(userID, dateStr, timezone, int(granularity), limit, cursor)
+		cached, err := s.cache.Get(ctx, cacheKey)
+		if err == nil && cached != nil {
+			s.logger.Debug("Timeline cache hit",
+				zap.String("user_id", userID.String()),
+				zap.String("date", dateStr))
+			return cached, nil
+		}
+	}
+
 	endOfDay := startOfDay.Add(24 * time.Hour)
 
 	// Convert to UTC for database queries
@@ -193,6 +215,15 @@ func (s *Service) GetDailyEnhanced(ctx context.Context, userID uuid.UUID, date t
 	// Generate time blocks
 	blocks := s.generateTimeBlocks(startOfDay, endOfDay, int(granularity), enrichedCheckins, loc)
 
+	// Apply pagination if requested
+	if limit > 0 {
+		blocks, _, err = PaginateBlocks(blocks, cursor, limit)
+		if err != nil {
+			s.logger.Error("Failed to paginate blocks", zap.Error(err))
+			return nil, fmt.Errorf("failed to paginate blocks: %w", err)
+		}
+	}
+
 	// Detect gaps between check-ins
 	gaps := s.detectGaps(enrichedCheckins, loc)
 
@@ -206,8 +237,8 @@ func (s *Service) GetDailyEnhanced(ctx context.Context, userID uuid.UUID, date t
 	prevDay := startOfDay.AddDate(0, 0, -1).Format("2006-01-02")
 	nextDay := startOfDay.AddDate(0, 0, 1).Format("2006-01-02")
 
-	return &EnhancedDayView{
-		Date:             startOfDay.Format("2006-01-02"),
+	view := &EnhancedDayView{
+		Date:             dateStr,
 		Timezone:         loc.String(),
 		BlockGranularity: int(granularity),
 		Blocks:           blocks,
@@ -217,7 +248,47 @@ func (s *Service) GetDailyEnhanced(ctx context.Context, userID uuid.UUID, date t
 		PreviousDay:      prevDay,
 		NextDay:          nextDay,
 		GeneratedAt:      time.Now().UTC(),
-	}, nil
+	}
+
+	// Cache the result if caching is enabled and not paginated
+	if s.cache != nil && cursor == "" && limit == 0 {
+		cacheKey := s.cache.CacheKey(userID, dateStr, timezone, int(granularity), limit, cursor)
+		ttl := CalculateTTL(startOfDay)
+
+		if err := s.cache.Set(ctx, cacheKey, view, ttl); err != nil {
+			s.logger.Warn("Failed to cache timeline", zap.Error(err))
+			// Don't fail the request if caching fails
+		}
+
+		// Set ETag for conditional requests
+		etag := ComputeETag(view)
+		if err := s.cache.SetETag(ctx, cacheKey, etag, ttl); err != nil {
+			s.logger.Warn("Failed to cache ETag", zap.Error(err))
+		}
+
+		// Set last modified timestamp
+		if err := s.cache.SetLastModified(ctx, cacheKey, view.GeneratedAt, ttl); err != nil {
+			s.logger.Warn("Failed to cache last modified", zap.Error(err))
+		}
+	}
+
+	return view, nil
+}
+
+// InvalidateCache invalidates cached timeline data for a user
+func (s *Service) InvalidateCache(ctx context.Context, userID uuid.UUID) error {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.InvalidateUserTimeline(ctx, userID)
+}
+
+// InvalidateDateCache invalidates cached timeline data for a specific date
+func (s *Service) InvalidateDateCache(ctx context.Context, userID uuid.UUID, date string) error {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.InvalidateDate(ctx, userID, date)
 }
 
 // GetDaily retrieves check-ins for a specific day

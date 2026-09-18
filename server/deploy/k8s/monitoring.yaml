@@ -1,0 +1,281 @@
+# ServiceMonitor for Prometheus to scrape Donelist API metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: donelist-api-metrics
+  namespace: donelist
+  labels:
+    app: donelist
+    component: api
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: donelist
+      component: api
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scheme: http
+    scrapeTimeout: 10s
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+    - sourceLabels: [__meta_kubernetes_namespace]
+      targetLabel: namespace
+
+---
+# PrometheusRule for alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: donelist-api-alerts
+  namespace: donelist
+  labels:
+    app: donelist
+    component: api
+    prometheus: kube-prometheus
+spec:
+  groups:
+  - name: donelist-api.rules
+    interval: 30s
+    rules:
+    # High error rate alert
+    - alert: HighErrorRate
+      expr: |
+        (
+          sum(rate(http_requests_total{job="donelist-api-service",status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{job="donelist-api-service"}[5m]))
+        ) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High error rate detected in Donelist API"
+        description: "Error rate is {{ $value | humanizePercentage }} for the last 5 minutes"
+        runbook_url: "https://runbooks.example.com/donelist/high-error-rate"
+
+    # Critical error rate alert
+    - alert: CriticalErrorRate
+      expr: |
+        (
+          sum(rate(http_requests_total{job="donelist-api-service",status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{job="donelist-api-service"}[5m]))
+        ) > 0.15
+      for: 2m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "Critical error rate detected in Donelist API"
+        description: "Error rate is {{ $value | humanizePercentage }} for the last 5 minutes"
+        runbook_url: "https://runbooks.example.com/donelist/critical-error-rate"
+
+    # High response time alert
+    - alert: HighResponseTime
+      expr: |
+        histogram_quantile(0.95,
+          sum(rate(http_request_duration_seconds_bucket{job="donelist-api-service"}[5m])) by (le)
+        ) > 1
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High response time detected in Donelist API"
+        description: "95th percentile response time is {{ $value | humanizeDuration }} for the last 5 minutes"
+        runbook_url: "https://runbooks.example.com/donelist/high-response-time"
+
+    # Pod not ready alert
+    - alert: PodNotReady
+      expr: |
+        kube_pod_status_phase{namespace="donelist",pod=~"donelist-api-.*",phase!="Running"} == 1
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "Donelist API pod is not ready"
+        description: "Pod {{ $labels.pod }} has been in {{ $labels.phase }} state for more than 5 minutes"
+        runbook_url: "https://runbooks.example.com/donelist/pod-not-ready"
+
+    # Pod crash looping alert
+    - alert: PodCrashLooping
+      expr: |
+        rate(kube_pod_container_status_restarts_total{namespace="donelist",pod=~"donelist-api-.*"}[15m]) > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "Donelist API pod is crash looping"
+        description: "Pod {{ $labels.pod }} is restarting frequently ({{ $value }} restarts per second)"
+        runbook_url: "https://runbooks.example.com/donelist/pod-crash-looping"
+
+    # High memory usage alert
+    - alert: HighMemoryUsage
+      expr: |
+        (
+          container_memory_working_set_bytes{namespace="donelist",pod=~"donelist-api-.*",container="donelist-api"}
+          /
+          container_spec_memory_limit_bytes{namespace="donelist",pod=~"donelist-api-.*",container="donelist-api"}
+        ) > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High memory usage in Donelist API"
+        description: "Memory usage is {{ $value | humanizePercentage }} for pod {{ $labels.pod }}"
+        runbook_url: "https://runbooks.example.com/donelist/high-memory-usage"
+
+    # High CPU usage alert
+    - alert: HighCPUUsage
+      expr: |
+        (
+          rate(container_cpu_usage_seconds_total{namespace="donelist",pod=~"donelist-api-.*",container="donelist-api"}[5m])
+          /
+          container_spec_cpu_quota{namespace="donelist",pod=~"donelist-api-.*",container="donelist-api"} * 100000
+        ) > 0.85
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High CPU usage in Donelist API"
+        description: "CPU usage is {{ $value | humanizePercentage }} for pod {{ $labels.pod }}"
+        runbook_url: "https://runbooks.example.com/donelist/high-cpu-usage"
+
+    # Database connection issues
+    - alert: DatabaseConnectionFailure
+      expr: |
+        rate(database_connection_errors_total{namespace="donelist"}[5m]) > 0
+      for: 2m
+      labels:
+        severity: critical
+        component: database
+      annotations:
+        summary: "Database connection failures detected"
+        description: "Database connection errors: {{ $value }} per second"
+        runbook_url: "https://runbooks.example.com/donelist/database-connection-failure"
+
+    # Redis connection issues
+    - alert: RedisConnectionFailure
+      expr: |
+        rate(redis_connection_errors_total{namespace="donelist"}[5m]) > 0
+      for: 2m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "Redis connection failures detected"
+        description: "Redis connection errors: {{ $value }} per second"
+        runbook_url: "https://runbooks.example.com/donelist/redis-connection-failure"
+
+    # Low replica count
+    - alert: LowReplicaCount
+      expr: |
+        kube_deployment_status_replicas_available{namespace="donelist",deployment="donelist-api"} < 2
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "Low replica count for Donelist API"
+        description: "Only {{ $value }} replicas are available (expected: 2+)"
+        runbook_url: "https://runbooks.example.com/donelist/low-replica-count"
+
+    # Deployment rollout stuck
+    - alert: DeploymentRolloutStuck
+      expr: |
+        kube_deployment_status_condition{namespace="donelist",deployment="donelist-api",condition="Progressing",status="false"} == 1
+      for: 10m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "Deployment rollout is stuck"
+        description: "Deployment {{ $labels.deployment }} rollout is not progressing"
+        runbook_url: "https://runbooks.example.com/donelist/deployment-rollout-stuck"
+
+---
+# Grafana Dashboard ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: donelist-api-dashboard
+  namespace: donelist
+  labels:
+    grafana_dashboard: "1"
+    app: donelist
+data:
+  donelist-api-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Donelist API Metrics",
+        "tags": ["donelist", "api"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Request Rate",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{job=\"donelist-api-service\"}[5m])) by (method, status)"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Response Time (95th percentile)",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le))"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Error Rate",
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{job=\"donelist-api-service\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"donelist-api-service\"}[5m]))"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Active Connections",
+            "targets": [
+              {
+                "expr": "sum(active_connections{job=\"donelist-api-service\"})"
+              }
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Memory Usage",
+            "targets": [
+              {
+                "expr": "container_memory_working_set_bytes{namespace=\"donelist\",pod=~\"donelist-api-.*\",container=\"donelist-api\"}"
+              }
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "CPU Usage",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{namespace=\"donelist\",pod=~\"donelist-api-.*\",container=\"donelist-api\"}[5m])"
+              }
+            ],
+            "type": "graph"
+          }
+        ]
+      }
+    }

@@ -1,0 +1,311 @@
+name: Nightly Full Test Suite
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run at 2 AM UTC every day
+  workflow_dispatch:     # Allow manual trigger
+
+jobs:
+  # Full test suite with mutation testing
+  mutation-tests:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Install gremlins
+        run: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+
+      - name: Run mutation tests
+        run: |
+          cd server
+          gremlins unleash
+        continue-on-error: true
+
+      - name: Upload mutation test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-test-results
+          path: |
+            server/mutation-report.html
+            server/mutation-report.json
+          retention-days: 30
+
+  # Load testing with k6
+  load-tests:
+    name: Load Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: donelist_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Build and start API
+        run: |
+          cd server
+          go build -o bin/api cmd/api/main.go
+          ./bin/api &
+          API_PID=$!
+          echo "API_PID=$API_PID" >> $GITHUB_ENV
+          sleep 5
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/donelist_test?sslmode=disable
+          REDIS_ADDR: localhost:6379
+          PORT: 8080
+
+      - name: Wait for API to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -f http://localhost:8080/health; then
+              echo "API is ready"
+              exit 0
+            fi
+            echo "Waiting for API... ($i/30)"
+            sleep 2
+          done
+          echo "API failed to start"
+          exit 1
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run auth load test
+        run: k6 run server/tests/load/auth_load_test.js
+        env:
+          API_URL: http://localhost:8080
+
+      - name: Run checkin load test
+        run: k6 run server/tests/load/checkin_load_test.js
+        env:
+          API_URL: http://localhost:8080
+
+      - name: Run spike test
+        run: k6 run server/tests/load/spike_test.js
+        env:
+          API_URL: http://localhost:8080
+
+      - name: Run stress test
+        run: k6 run server/tests/load/stress_test.js
+        env:
+          API_URL: http://localhost:8080
+        continue-on-error: true  # Stress test may fail at breaking point
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ ! -z "$API_PID" ]; then
+            kill $API_PID || true
+          fi
+
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            **/*-summary.json
+          retention-days: 30
+
+  # Comprehensive security scan
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run Gosec
+        uses: securego/gosec@master
+        with:
+          args: '-fmt json -out gosec-results.json -severity medium ./...'
+          working-directory: server
+
+      - name: Run Nancy (dependency vulnerability scanner)
+        run: |
+          go install github.com/sonatype-nexus-community/nancy@latest
+          go list -json -deps ./... | nancy sleuth
+
+      - name: Upload security scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-results
+          path: |
+            server/gosec-results.json
+          retention-days: 30
+
+  # Full E2E test suite
+  full-e2e-tests:
+    name: Full E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: donelist_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download dependencies
+        run: |
+          cd server
+          go mod download
+
+      - name: Run all E2E tests
+        run: |
+          cd server
+          go test -v -tags=e2e -timeout=20m ./tests/e2e/...
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/donelist_test?sslmode=disable
+          REDIS_ADDR: localhost:6379
+
+      - name: Upload E2E test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: |
+            server/tests/e2e/*.log
+            server/tests/e2e/*.json
+          retention-days: 30
+
+  # Nightly test summary
+  nightly-summary:
+    name: Nightly Test Summary
+    runs-on: ubuntu-latest
+    needs: [mutation-tests, load-tests, security-scan, full-e2e-tests]
+    if: always()
+
+    steps:
+      - name: Generate summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const mutationStatus = '${{ needs.mutation-tests.result }}';
+            const loadStatus = '${{ needs.load-tests.result }}';
+            const securityStatus = '${{ needs.security-scan.result }}';
+            const e2eStatus = '${{ needs.full-e2e-tests.result }}';
+
+            const getIcon = (status) => {
+              switch(status) {
+                case 'success': return '✅';
+                case 'failure': return '❌';
+                case 'skipped': return '⏭️';
+                default: return '⚠️';
+              }
+            };
+
+            const summary = `# Nightly Test Suite Results - ${new Date().toISOString().split('T')[0]}
+
+            | Test Suite | Status |
+            |------------|--------|
+            | Mutation Tests | ${getIcon(mutationStatus)} ${mutationStatus} |
+            | Load Tests | ${getIcon(loadStatus)} ${loadStatus} |
+            | Security Scan | ${getIcon(securityStatus)} ${securityStatus} |
+            | Full E2E Tests | ${getIcon(e2eStatus)} ${e2eStatus} |
+
+            ## Summary
+
+            ${
+              mutationStatus === 'success' && loadStatus === 'success' && securityStatus === 'success' && e2eStatus === 'success'
+                ? '🎉 All nightly tests passed! System is healthy.'
+                : '⚠️  Some tests failed. Please review the details above.'
+            }
+
+            **Note**: Stress tests may show failures when finding system limits - this is expected behavior.
+            `;
+
+            core.summary
+              .addRaw(summary)
+              .write();
+
+      - name: Send notification on failure
+        if: failure()
+        run: |
+          echo "Nightly tests failed. Consider setting up Slack/email notifications here."
+          # Example: Send to Slack webhook
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"❌ Nightly tests failed! Check GitHub Actions."}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}

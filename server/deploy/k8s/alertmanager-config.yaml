@@ -1,0 +1,269 @@
+# Alertmanager Configuration for Donelist API
+# Handles alert routing, grouping, and notification delivery
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: donelist
+  labels:
+    app: alertmanager
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      slack_api_url: 'SLACK_WEBHOOK_URL_HERE'
+
+    # Templates for alert formatting
+    templates:
+    - '/etc/alertmanager/templates/*.tmpl'
+
+    # Route tree for alert distribution
+    route:
+      receiver: 'default'
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+
+      routes:
+      # Critical alerts - immediate notification
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        group_wait: 5s
+        repeat_interval: 4h
+        continue: true
+
+      # Warning alerts - grouped notifications
+      - match:
+          severity: warning
+        receiver: 'warning-alerts'
+        group_wait: 30s
+        repeat_interval: 12h
+
+      # Database alerts
+      - match_re:
+          component: database|cache
+        receiver: 'database-team'
+        group_wait: 15s
+        repeat_interval: 6h
+
+      # API alerts
+      - match:
+          component: api
+        receiver: 'api-team'
+        group_wait: 15s
+        repeat_interval: 6h
+
+      # Infrastructure alerts
+      - match_re:
+          alertname: '.*Pod.*|.*Node.*|.*Deployment.*'
+        receiver: 'infrastructure-team'
+        group_wait: 20s
+        repeat_interval: 8h
+
+    # Inhibition rules - suppress alerts when other alerts are firing
+    inhibit_rules:
+    # Suppress warning if critical is firing for same alert
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'cluster', 'service']
+
+    # Suppress pod alerts if deployment is failing
+    - source_match:
+        alertname: 'DeploymentRolloutStuck'
+      target_match_re:
+        alertname: 'Pod.*'
+      equal: ['namespace', 'deployment']
+
+    # Suppress individual pod alerts if low replica count
+    - source_match:
+        alertname: 'LowReplicaCount'
+      target_match:
+        alertname: 'PodNotReady'
+      equal: ['namespace', 'deployment']
+
+    receivers:
+    # Default receiver
+    - name: 'default'
+      slack_configs:
+      - channel: '#donelist-alerts'
+        title: 'Donelist Alert'
+        text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}'
+
+    # Critical alerts - multiple channels + PagerDuty
+    - name: 'critical-alerts'
+      slack_configs:
+      - channel: '#donelist-critical'
+        title: ':rotating_light: CRITICAL: {{ .GroupLabels.alertname }}'
+        text: |
+          *Alert:* {{ .GroupLabels.alertname }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Runbook:* {{ .CommonAnnotations.runbook_url }}
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+      # Uncomment to enable PagerDuty integration
+      # pagerduty_configs:
+      # - service_key: 'PAGERDUTY_SERVICE_KEY'
+      #   description: '{{ .CommonAnnotations.summary }}'
+
+    # Warning alerts - Slack only
+    - name: 'warning-alerts'
+      slack_configs:
+      - channel: '#donelist-alerts'
+        title: ':warning: WARNING: {{ .GroupLabels.alertname }}'
+        text: |
+          *Alert:* {{ .GroupLabels.alertname }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+          *Runbook:* {{ .CommonAnnotations.runbook_url }}
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+
+    # Database team alerts
+    - name: 'database-team'
+      slack_configs:
+      - channel: '#donelist-database'
+        title: 'Database Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          *Component:* {{ .CommonLabels.component }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+        send_resolved: true
+      # email_configs:
+      # - to: 'database-team@example.com'
+      #   from: 'alertmanager@example.com'
+      #   smarthost: 'smtp.example.com:587'
+
+    # API team alerts
+    - name: 'api-team'
+      slack_configs:
+      - channel: '#donelist-api'
+        title: 'API Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          *Component:* {{ .CommonLabels.component }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+        send_resolved: true
+
+    # Infrastructure team alerts
+    - name: 'infrastructure-team'
+      slack_configs:
+      - channel: '#donelist-infrastructure'
+        title: 'Infrastructure Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          *Alert:* {{ .GroupLabels.alertname }}
+          *Summary:* {{ .CommonAnnotations.summary }}
+          *Description:* {{ .CommonAnnotations.description }}
+        send_resolved: true
+
+  # Alert message templates
+  alert-templates.tmpl: |
+    {{ define "slack.title" }}
+    [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.alertname }}
+    {{ end }}
+
+    {{ define "slack.text" }}
+    {{ range .Alerts }}
+    *Alert:* {{ .Labels.alertname }}
+    *Severity:* {{ .Labels.severity }}
+    *Summary:* {{ .Annotations.summary }}
+    *Description:* {{ .Annotations.description }}
+    {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+    *Started:* {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}
+    {{ if .EndsAt }}*Ended:* {{ .EndsAt.Format "2006-01-02 15:04:05 MST" }}{{ end }}
+    {{ end }}
+    {{ end }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: donelist
+  labels:
+    app: alertmanager
+spec:
+  type: ClusterIP
+  ports:
+  - name: web
+    port: 9093
+    targetPort: 9093
+    protocol: TCP
+  selector:
+    app: alertmanager
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: donelist
+  labels:
+    app: alertmanager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:v0.26.0
+        args:
+        - '--config.file=/etc/alertmanager/alertmanager.yml'
+        - '--storage.path=/alertmanager'
+        - '--cluster.advertise-address=$(POD_IP):9094'
+        - '--cluster.listen-address=0.0.0.0:9094'
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+        - name: web
+          containerPort: 9093
+          protocol: TCP
+        - name: cluster
+          containerPort: 9094
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: web
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: web
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alertmanager
+        - name: storage
+          mountPath: /alertmanager
+      volumes:
+      - name: config
+        configMap:
+          name: alertmanager-config
+      - name: storage
+        emptyDir: {}

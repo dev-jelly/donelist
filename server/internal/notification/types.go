@@ -24,6 +24,12 @@ const (
 
 	// NotificationTypeDigest represents digest notifications
 	NotificationTypeDigest NotificationType = "digest"
+
+	// NotificationTypeSubscription represents subscription-related notifications
+	NotificationTypeSubscription NotificationType = "subscription"
+
+	// NotificationTypePayment represents payment-related notifications
+	NotificationTypePayment NotificationType = "payment"
 )
 
 // Priority represents notification priority level
@@ -164,7 +170,8 @@ type BatchNotification struct {
 func IsValidNotificationType(t NotificationType) bool {
 	switch t {
 	case NotificationTypeEmail, NotificationTypePush, NotificationTypeReminder,
-	     NotificationTypeAlert, NotificationTypeDigest:
+	     NotificationTypeAlert, NotificationTypeDigest, NotificationTypeSubscription,
+	     NotificationTypePayment:
 		return true
 	default:
 		return false

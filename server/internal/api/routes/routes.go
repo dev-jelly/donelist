@@ -119,6 +119,8 @@ func SetupRoutes(
 		calendar.Use(authMiddleware)
 		{
 			calendar.GET("/monthly", calendarHandler.GetMonthlyCalendar)
+			calendar.GET("/month", calendarHandler.GetMonthlyCalendarV2) // V2 with caching and ETags
+			calendar.GET("/heatmap", calendarHandler.GetHeatmap)
 		}
 
 		// Protected statistics routes
@@ -250,6 +252,7 @@ func SetupRoutes(
 			personalCalendar := personal.Group("/calendar")
 			{
 				personalCalendar.GET("/monthly", calendarHandler.GetMonthlyCalendar)
+				personalCalendar.GET("/heatmap", calendarHandler.GetHeatmap)
 			}
 
 			// Personal statistics
@@ -307,6 +310,7 @@ func SetupRoutes(
 			teamCalendar := teamMode.Group("/calendar")
 			{
 				teamCalendar.GET("/monthly", calendarHandler.GetMonthlyCalendar)
+				teamCalendar.GET("/heatmap", calendarHandler.GetHeatmap)
 			}
 
 			// Team statistics

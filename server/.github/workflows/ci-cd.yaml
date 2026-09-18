@@ -1,0 +1,393 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main, develop]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  GO_VERSION: '1.24'
+
+jobs:
+  # Job 1: Build and Test
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: donelist_test
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: server/go.sum
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: |
+          cd server
+          go mod download
+          go mod verify
+
+      - name: Run unit tests
+        run: |
+          cd server
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        env:
+          DATABASE_URL: postgresql://postgres:test@localhost:5432/donelist_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-secret-key-for-ci
+          GO_ENV: test
+
+      - name: Check coverage threshold
+        run: |
+          cd server
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "Warning: Coverage is below 70% threshold"
+          fi
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./server/coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Run linters
+        run: |
+          cd server
+          go vet ./...
+
+      - name: Run security scan
+        uses: securego/gosec@master
+        with:
+          args: '-fmt json -out gosec-results.json ./...'
+          working-directory: server
+
+  # Job 2: Build Docker Image
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Job 3: Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://api-staging.donelist.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace donelist-staging --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install donelist-api ./server/helm/donelist-api \
+            --namespace donelist-staging \
+            --values ./server/helm/donelist-api/values-staging.yaml \
+            --set image.tag=sha-${{ github.sha }} \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set secrets.dbPassword=${{ secrets.STAGING_DB_PASSWORD }} \
+            --set secrets.redisPassword=${{ secrets.STAGING_REDIS_PASSWORD }} \
+            --set secrets.jwtSecret=${{ secrets.STAGING_JWT_SECRET }} \
+            --wait \
+            --timeout=600s \
+            --atomic \
+            --cleanup-on-fail
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/donelist-api -n donelist-staging --timeout=300s
+          kubectl get pods -n donelist-staging -l app.kubernetes.io/name=donelist-api
+
+      - name: Run smoke tests
+        run: |
+          sleep 30  # Wait for service to be fully ready
+          curl -f https://api-staging.donelist.example.com/health || exit 1
+          curl -f https://api-staging.donelist.example.com/readyz || exit 1
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          echo "Staging deployment status: $STATUS"
+          # Add your notification logic here (Slack, Discord, etc.)
+
+  # Job 4: Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://api.donelist.example.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'v3.13.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace donelist --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Backup current deployment
+        run: |
+          kubectl get deployment donelist-api -n donelist -o yaml > deployment-backup-${{ github.sha }}.yaml || true
+
+      - name: Deploy with Helm (Blue-Green Strategy)
+        run: |
+          # Get current deployment color
+          CURRENT_COLOR=$(kubectl get deployment -n donelist -l app.kubernetes.io/name=donelist-api -o jsonpath='{.items[0].metadata.labels.color}' 2>/dev/null || echo "blue")
+          NEW_COLOR="green"
+          if [ "$CURRENT_COLOR" = "green" ]; then
+            NEW_COLOR="blue"
+          fi
+
+          echo "Current color: $CURRENT_COLOR, Deploying to: $NEW_COLOR"
+
+          # Deploy new version
+          helm upgrade --install donelist-api-$NEW_COLOR ./server/helm/donelist-api \
+            --namespace donelist \
+            --values ./server/helm/donelist-api/values-production.yaml \
+            --set image.tag=sha-${{ github.sha }} \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set secrets.dbPassword=${{ secrets.PRODUCTION_DB_PASSWORD }} \
+            --set secrets.redisPassword=${{ secrets.PRODUCTION_REDIS_PASSWORD }} \
+            --set secrets.jwtSecret=${{ secrets.PRODUCTION_JWT_SECRET }} \
+            --set fullnameOverride=donelist-api-$NEW_COLOR \
+            --wait \
+            --timeout=600s \
+            --atomic \
+            --cleanup-on-fail
+
+      - name: Health check new deployment
+        run: |
+          kubectl rollout status deployment/donelist-api-$NEW_COLOR -n donelist --timeout=300s
+
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=donelist-api \
+            -n donelist \
+            --timeout=300s
+
+      - name: Run production smoke tests
+        run: |
+          sleep 60  # Wait for service stabilization
+
+          # Get service endpoint
+          SERVICE_IP=$(kubectl get svc donelist-api-$NEW_COLOR -n donelist -o jsonpath='{.spec.clusterIP}')
+
+          # Run health checks from within cluster
+          kubectl run health-check --rm -i --restart=Never --image=curlimages/curl -- \
+            curl -f http://$SERVICE_IP/health || exit 1
+
+      - name: Switch traffic to new deployment
+        run: |
+          # Update main service to point to new color
+          kubectl patch service donelist-api -n donelist \
+            -p '{"spec":{"selector":{"color":"'$NEW_COLOR'"}}}'
+
+          echo "Traffic switched to $NEW_COLOR deployment"
+          sleep 30  # Allow traffic to stabilize
+
+      - name: Cleanup old deployment
+        run: |
+          # Remove old color deployment after successful switch
+          helm uninstall donelist-api-$CURRENT_COLOR --namespace donelist || true
+
+      - name: Verify production deployment
+        run: |
+          curl -f https://api.donelist.example.com/health || exit 1
+          curl -f https://api.donelist.example.com/readyz || exit 1
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          echo "Production deployment status: $STATUS"
+          # Add your notification logic here
+
+  # Job 5: Rollback (Manual Trigger)
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > $HOME/.kube/config
+
+      - name: Rollback to previous version
+        run: |
+          helm rollback donelist-api -n donelist
+          kubectl rollout status deployment/donelist-api -n donelist
+
+      - name: Verify rollback
+        run: |
+          kubectl get pods -n donelist -l app.kubernetes.io/name=donelist-api
+          curl -f https://api.donelist.example.com/health || exit 1

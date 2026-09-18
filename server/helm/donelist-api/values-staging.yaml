@@ -1,0 +1,65 @@
+# Staging environment values
+global:
+  environment: staging
+  domain: staging.donelist.example.com
+
+replicaCount: 1
+
+image:
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+  hosts:
+    - host: api-staging.donelist.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: donelist-api-staging-tls
+      hosts:
+        - api-staging.donelist.example.com
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+
+env:
+  SERVER_ENV: "staging"
+  CORS_ALLOWED_ORIGINS: "https://staging.donelist.example.com"
+  LOG_LEVEL: "debug"
+
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+redis:
+  enabled: true
+  master:
+    persistence:
+      size: 2Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi

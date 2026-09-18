@@ -12,6 +12,7 @@ import (
 // Service handles statistics business logic
 type Service struct {
 	statsRepo RepositoryInterface
+	cache     *CacheService
 	logger    *zap.Logger
 }
 
@@ -19,8 +20,14 @@ type Service struct {
 func NewService(statsRepo RepositoryInterface, logger *zap.Logger) *Service {
 	return &Service{
 		statsRepo: statsRepo,
+		cache:     nil, // Cache is optional and can be set later
 		logger:    logger,
 	}
+}
+
+// SetCache sets the cache service (optional)
+func (s *Service) SetCache(cache *CacheService) {
+	s.cache = cache
 }
 
 // GetWeeklyOptions represents options for getting weekly statistics
@@ -51,6 +58,25 @@ func (s *Service) GetWeeklyStatistics(ctx context.Context, opts GetWeeklyOptions
 
 	// Calculate week bounds
 	startOfWeek, endOfWeek := CalculateWeekBounds(opts.Date, opts.WeekStartDay, loc)
+
+	// Check cache if available
+	if s.cache != nil {
+		cacheKey := GenerateCacheKey(
+			opts.UserID.String(),
+			startOfWeek.Format("2006-01-02"),
+			opts.WeekStartDay,
+			opts.Timezone,
+		)
+
+		cached, err := s.cache.GetWeeklyStats(ctx, cacheKey)
+		if err == nil && cached != nil {
+			s.logger.Debug("Returning cached weekly statistics",
+				zap.String("user_id", opts.UserID.String()),
+				zap.String("week_start", startOfWeek.Format("2006-01-02")),
+			)
+			return cached, nil
+		}
+	}
 	startOfWeekUTC := startOfWeek.UTC()
 	endOfWeekUTC := endOfWeek.UTC()
 
@@ -138,6 +164,24 @@ func (s *Service) GetWeeklyStatistics(ctx context.Context, opts GetWeeklyOptions
 	now := time.Now().In(loc)
 	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, loc)
 	stats.CacheExpiration = tomorrow.UTC()
+
+	// Cache the result if cache is available
+	if s.cache != nil {
+		cacheKey := GenerateCacheKey(
+			opts.UserID.String(),
+			startOfWeek.Format("2006-01-02"),
+			opts.WeekStartDay,
+			opts.Timezone,
+		)
+
+		if err := s.cache.SetWeeklyStats(ctx, cacheKey, stats); err != nil {
+			s.logger.Warn("Failed to cache weekly statistics",
+				zap.String("user_id", opts.UserID.String()),
+				zap.Error(err),
+			)
+			// Don't fail the request if caching fails
+		}
+	}
 
 	return stats, nil
 }

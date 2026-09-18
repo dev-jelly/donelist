@@ -327,7 +327,7 @@ func (m *AlertManager) sendWebhookNotification(ctx context.Context, alert *Alert
 	// Use webhook service if available
 	if m.webhook != nil {
 		// This would trigger webhooks subscribed to security events
-		return m.webhook.TriggerWebhook(ctx, "security.alert", uuid.Nil, payload)
+		return m.webhook.TriggerEvent(ctx, "security.alert", uuid.Nil, payload)
 	}
 
 	return nil

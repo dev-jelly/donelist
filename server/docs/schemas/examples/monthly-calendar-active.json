@@ -1,0 +1,439 @@
+{
+  "year": 2024,
+  "month": 11,
+  "month_name": "November",
+  "start_of_week": "monday",
+  "grid": [
+    [
+      {
+        "date": "2024-10-28",
+        "in_current_month": false,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-10-29",
+        "in_current_month": false,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-10-30",
+        "in_current_month": false,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-10-31",
+        "in_current_month": false,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-11-01",
+        "in_current_month": true,
+        "progress": 85.5,
+        "color": "#10b981",
+        "color_bucket": 4,
+        "is_today": false,
+        "checkin_count": 15,
+        "total_minutes": 1231
+      },
+      {
+        "date": "2024-11-02",
+        "in_current_month": true,
+        "progress": 67.3,
+        "color": "#34d399",
+        "color_bucket": 3,
+        "is_today": false,
+        "checkin_count": 12,
+        "total_minutes": 969
+      },
+      {
+        "date": "2024-11-03",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      }
+    ],
+    [
+      {
+        "date": "2024-11-04",
+        "in_current_month": true,
+        "progress": 92.1,
+        "color": "#10b981",
+        "color_bucket": 4,
+        "is_today": false,
+        "checkin_count": 18,
+        "total_minutes": 1326
+      },
+      {
+        "date": "2024-11-05",
+        "in_current_month": true,
+        "progress": 100.0,
+        "color": "#059669",
+        "color_bucket": 5,
+        "is_today": false,
+        "checkin_count": 20,
+        "total_minutes": 1440
+      },
+      {
+        "date": "2024-11-06",
+        "in_current_month": true,
+        "progress": 78.4,
+        "color": "#10b981",
+        "color_bucket": 4,
+        "is_today": false,
+        "checkin_count": 14,
+        "total_minutes": 1129
+      },
+      {
+        "date": "2024-11-07",
+        "in_current_month": true,
+        "progress": 55.2,
+        "color": "#34d399",
+        "color_bucket": 3,
+        "is_today": false,
+        "checkin_count": 10,
+        "total_minutes": 795
+      },
+      {
+        "date": "2024-11-08",
+        "in_current_month": true,
+        "progress": 43.1,
+        "color": "#6ee7b7",
+        "color_bucket": 2,
+        "is_today": false,
+        "checkin_count": 8,
+        "total_minutes": 621
+      },
+      {
+        "date": "2024-11-09",
+        "in_current_month": true,
+        "progress": 18.5,
+        "color": "#d1fae5",
+        "color_bucket": 1,
+        "is_today": false,
+        "checkin_count": 3,
+        "total_minutes": 266
+      },
+      {
+        "date": "2024-11-10",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      }
+    ],
+    [
+      {
+        "date": "2024-11-11",
+        "in_current_month": true,
+        "progress": 100.0,
+        "color": "#059669",
+        "color_bucket": 5,
+        "is_today": false,
+        "checkin_count": 22,
+        "total_minutes": 1440
+      },
+      {
+        "date": "2024-11-12",
+        "in_current_month": true,
+        "progress": 87.5,
+        "color": "#10b981",
+        "color_bucket": 4,
+        "is_today": false,
+        "checkin_count": 16,
+        "total_minutes": 1260
+      },
+      {
+        "date": "2024-11-13",
+        "in_current_month": true,
+        "progress": 72.9,
+        "color": "#34d399",
+        "color_bucket": 3,
+        "is_today": false,
+        "checkin_count": 13,
+        "total_minutes": 1050
+      },
+      {
+        "date": "2024-11-14",
+        "in_current_month": true,
+        "progress": 35.4,
+        "color": "#6ee7b7",
+        "color_bucket": 2,
+        "is_today": false,
+        "checkin_count": 7,
+        "total_minutes": 510
+      },
+      {
+        "date": "2024-11-15",
+        "in_current_month": true,
+        "progress": 100.0,
+        "color": "#059669",
+        "color_bucket": 5,
+        "is_today": false,
+        "checkin_count": 20,
+        "total_minutes": 1440
+      },
+      {
+        "date": "2024-11-16",
+        "in_current_month": true,
+        "progress": 25.0,
+        "color": "#6ee7b7",
+        "color_bucket": 2,
+        "is_today": false,
+        "checkin_count": 5,
+        "total_minutes": 360
+      },
+      {
+        "date": "2024-11-17",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      }
+    ],
+    [
+      {
+        "date": "2024-11-18",
+        "in_current_month": true,
+        "progress": 91.7,
+        "color": "#10b981",
+        "color_bucket": 4,
+        "is_today": false,
+        "checkin_count": 17,
+        "total_minutes": 1320
+      },
+      {
+        "date": "2024-11-19",
+        "in_current_month": true,
+        "progress": 83.3,
+        "color": "#10b981",
+        "color_bucket": 4,
+        "is_today": false,
+        "checkin_count": 16,
+        "total_minutes": 1200
+      },
+      {
+        "date": "2024-11-20",
+        "in_current_month": true,
+        "progress": 66.7,
+        "color": "#34d399",
+        "color_bucket": 3,
+        "is_today": false,
+        "checkin_count": 11,
+        "total_minutes": 960
+      },
+      {
+        "date": "2024-11-21",
+        "in_current_month": true,
+        "progress": 50.0,
+        "color": "#34d399",
+        "color_bucket": 3,
+        "is_today": false,
+        "checkin_count": 9,
+        "total_minutes": 720
+      },
+      {
+        "date": "2024-11-22",
+        "in_current_month": true,
+        "progress": 29.9,
+        "color": "#6ee7b7",
+        "color_bucket": 2,
+        "is_today": false,
+        "checkin_count": 6,
+        "total_minutes": 430
+      },
+      {
+        "date": "2024-11-23",
+        "in_current_month": true,
+        "progress": 12.5,
+        "color": "#d1fae5",
+        "color_bucket": 1,
+        "is_today": false,
+        "checkin_count": 2,
+        "total_minutes": 180
+      },
+      {
+        "date": "2024-11-24",
+        "in_current_month": true,
+        "progress": 45.8,
+        "color": "#6ee7b7",
+        "color_bucket": 2,
+        "is_today": true,
+        "checkin_count": 8,
+        "total_minutes": 660
+      }
+    ],
+    [
+      {
+        "date": "2024-11-25",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-11-26",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-11-27",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-11-28",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-11-29",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-11-30",
+        "in_current_month": true,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      },
+      {
+        "date": "2024-12-01",
+        "in_current_month": false,
+        "progress": 0.0,
+        "color": "#f3f4f6",
+        "color_bucket": 0,
+        "is_today": false,
+        "checkin_count": 0,
+        "total_minutes": 0
+      }
+    ]
+  ],
+  "summary": {
+    "total_checkins": 285,
+    "total_minutes": 15420,
+    "days_with_checkins": 22,
+    "total_days_in_month": 30,
+    "average_per_day": 9.5,
+    "completion_rate": 73.33,
+    "most_productive_day": "2024-11-15",
+    "most_productive_count": 20,
+    "current_streak": 5,
+    "longest_streak": 9
+  },
+  "legend": {
+    "buckets": [
+      {
+        "index": 0,
+        "label": "None",
+        "min_progress": 0.0,
+        "max_progress": 0.0,
+        "color": "#f3f4f6",
+        "description": "No activity tracked"
+      },
+      {
+        "index": 1,
+        "label": "Minimal",
+        "min_progress": 0.1,
+        "max_progress": 24.9,
+        "color": "#d1fae5",
+        "description": "Started tracking (< 6 hours)"
+      },
+      {
+        "index": 2,
+        "label": "Low",
+        "min_progress": 25.0,
+        "max_progress": 49.9,
+        "color": "#6ee7b7",
+        "description": "Quarter to half day (6-12 hours)"
+      },
+      {
+        "index": 3,
+        "label": "Medium",
+        "min_progress": 50.0,
+        "max_progress": 74.9,
+        "color": "#34d399",
+        "description": "Half to three-quarters day (12-18 hours)"
+      },
+      {
+        "index": 4,
+        "label": "High",
+        "min_progress": 75.0,
+        "max_progress": 99.9,
+        "color": "#10b981",
+        "description": "Nearly full day (18-24 hours)"
+      },
+      {
+        "index": 5,
+        "label": "Complete",
+        "min_progress": 100.0,
+        "max_progress": 100.0,
+        "color": "#059669",
+        "description": "Full day tracked (24+ hours)"
+      }
+    ]
+  },
+  "navigation": {
+    "previous_month": "2024-10",
+    "next_month": "2024-12",
+    "current_month": "2024-11"
+  },
+  "generated_at": "2024-11-24T10:30:00Z",
+  "cache_expiration": "2024-11-25T00:00:00Z"
+}

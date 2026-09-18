@@ -62,39 +62,9 @@ func (v *Validator) ValidateVar(field interface{}, tag string) error {
 // validateNoSQLInjection checks for common SQL injection patterns
 func validateNoSQLInjection(fl validator.FieldLevel) bool {
 	value := fl.Field().String()
-	value = strings.ToLower(value)
-
-	// Common SQL injection patterns
-	sqlPatterns := []string{
-		"'",
-		"--",
-		"/*",
-		"*/",
-		"xp_",
-		"sp_",
-		"union",
-		"select",
-		"insert",
-		"update",
-		"delete",
-		"drop",
-		"create",
-		"alter",
-		"execute",
-		"exec",
-		"script",
-		"javascript",
-		"<script",
-		"onerror",
-		"onload",
-	}
-
-	for _, pattern := range sqlPatterns {
-		if strings.Contains(value, pattern) {
-			return false
-		}
-	}
-	return true
+	// Use the comprehensive DetectSQLInjection function
+	// Returns true if injection detected, so we negate it for validation
+	return !DetectSQLInjection(value)
 }
 
 // validateNoXSS checks for XSS attack patterns

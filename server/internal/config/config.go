@@ -36,12 +36,16 @@ type ServerConfig struct {
 
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	Name     string
-	SSLMode  string
+	Host            string
+	Port            int
+	User            string
+	Password        string
+	Name            string
+	SSLMode         string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
 }
 
 // RedisConfig holds Redis configuration
@@ -117,12 +121,16 @@ func Load() (*Config, error) {
 			MaxHeaderBytes: v.GetInt("SERVER_MAX_HEADER_BYTES"),
 		},
 		Database: DatabaseConfig{
-			Host:     v.GetString("POSTGRES_HOST"),
-			Port:     v.GetInt("POSTGRES_PORT"),
-			User:     v.GetString("POSTGRES_USER"),
-			Password: v.GetString("POSTGRES_PASSWORD"),
-			Name:     v.GetString("POSTGRES_DB"),
-			SSLMode:  v.GetString("POSTGRES_SSLMODE"),
+			Host:            v.GetString("POSTGRES_HOST"),
+			Port:            v.GetInt("POSTGRES_PORT"),
+			User:            v.GetString("POSTGRES_USER"),
+			Password:        v.GetString("POSTGRES_PASSWORD"),
+			Name:            v.GetString("POSTGRES_DB"),
+			SSLMode:         v.GetString("POSTGRES_SSLMODE"),
+			MaxOpenConns:    v.GetInt("DB_MAX_OPEN_CONNS"),
+			MaxIdleConns:    v.GetInt("DB_MAX_IDLE_CONNS"),
+			ConnMaxLifetime: v.GetDuration("DB_CONN_MAX_LIFETIME"),
+			ConnMaxIdleTime: v.GetDuration("DB_CONN_MAX_IDLE_TIME"),
 		},
 		Redis: RedisConfig{
 			Host:     v.GetString("REDIS_HOST"),
@@ -178,6 +186,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("POSTGRES_HOST", "localhost")
 	v.SetDefault("POSTGRES_PORT", 5432)
 	v.SetDefault("POSTGRES_SSLMODE", "disable")
+
+	// Database connection pool defaults (optimized for production workloads)
+	v.SetDefault("DB_MAX_OPEN_CONNS", 100)      // Allow high concurrency
+	v.SetDefault("DB_MAX_IDLE_CONNS", 25)       // Maintain warm connections
+	v.SetDefault("DB_CONN_MAX_LIFETIME", 30*time.Minute) // Prevent stale connections
+	v.SetDefault("DB_CONN_MAX_IDLE_TIME", 10*time.Minute) // Balance reuse and cleanup
 
 	// Redis defaults
 	v.SetDefault("REDIS_HOST", "localhost")

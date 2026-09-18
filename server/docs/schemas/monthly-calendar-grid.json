@@ -1,0 +1,313 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://api.donelist.app/schemas/monthly-calendar-grid.json",
+  "title": "Monthly Calendar Grid",
+  "description": "7x6 grid-based monthly calendar with progress-based color mapping",
+  "type": "object",
+  "required": [
+    "year",
+    "month",
+    "month_name",
+    "start_of_week",
+    "grid",
+    "summary",
+    "legend",
+    "navigation",
+    "generated_at"
+  ],
+  "properties": {
+    "year": {
+      "type": "integer",
+      "minimum": 1970,
+      "maximum": 2100,
+      "description": "Calendar year",
+      "example": 2024
+    },
+    "month": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12,
+      "description": "Month number (1=January, 12=December)",
+      "example": 11
+    },
+    "month_name": {
+      "type": "string",
+      "description": "Human-readable month name",
+      "example": "November"
+    },
+    "start_of_week": {
+      "type": "string",
+      "enum": ["sunday", "monday"],
+      "description": "First day of the week for calendar layout",
+      "example": "monday"
+    },
+    "grid": {
+      "type": "array",
+      "description": "7x6 matrix of day cells (weeks x days)",
+      "minItems": 4,
+      "maxItems": 6,
+      "items": {
+        "type": "array",
+        "description": "Week containing 7 days",
+        "minItems": 7,
+        "maxItems": 7,
+        "items": {
+          "$ref": "#/definitions/DayCell"
+        }
+      }
+    },
+    "summary": {
+      "$ref": "#/definitions/MonthSummary"
+    },
+    "legend": {
+      "$ref": "#/definitions/ColorLegend"
+    },
+    "navigation": {
+      "$ref": "#/definitions/MonthNavigation"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when this response was generated",
+      "example": "2024-11-24T10:00:00Z"
+    },
+    "cache_expiration": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when this cached response expires",
+      "example": "2024-11-25T00:00:00Z"
+    }
+  },
+  "definitions": {
+    "DayCell": {
+      "type": "object",
+      "required": [
+        "date",
+        "in_current_month",
+        "progress",
+        "color",
+        "color_bucket",
+        "is_today",
+        "checkin_count",
+        "total_minutes"
+      ],
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "ISO 8601 date (YYYY-MM-DD)",
+          "example": "2024-11-15"
+        },
+        "in_current_month": {
+          "type": "boolean",
+          "description": "True if this day belongs to the displayed month (false for overflow days from adjacent months)",
+          "example": true
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Completion percentage (0-100) calculated as (total_minutes / 1440) * 100",
+          "example": 65.5
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "Hex color code for this progress level",
+          "example": "#34d399"
+        },
+        "color_bucket": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Color bucket index (0=none, 1=minimal, 2=low, 3=medium, 4=high, 5=complete)",
+          "example": 3
+        },
+        "is_today": {
+          "type": "boolean",
+          "description": "True if this is today's date",
+          "example": false
+        },
+        "checkin_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of check-ins on this day",
+          "example": 12
+        },
+        "total_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total minutes tracked on this day",
+          "example": 943
+        }
+      }
+    },
+    "MonthSummary": {
+      "type": "object",
+      "required": [
+        "total_checkins",
+        "total_minutes",
+        "days_with_checkins",
+        "total_days_in_month",
+        "average_per_day",
+        "completion_rate",
+        "current_streak",
+        "longest_streak"
+      ],
+      "properties": {
+        "total_checkins": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of check-ins in the month",
+          "example": 250
+        },
+        "total_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total minutes tracked in the month",
+          "example": 12000
+        },
+        "days_with_checkins": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of days with at least one check-in",
+          "example": 22
+        },
+        "total_days_in_month": {
+          "type": "integer",
+          "minimum": 28,
+          "maximum": 31,
+          "description": "Total days in this month",
+          "example": 30
+        },
+        "average_per_day": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Average check-ins per day (total_checkins / total_days_in_month)",
+          "example": 8.33
+        },
+        "completion_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of days with check-ins (days_with_checkins / total_days_in_month * 100)",
+          "example": 73.33
+        },
+        "most_productive_day": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "Date with the most check-ins (null if no check-ins)",
+          "example": "2024-11-15"
+        },
+        "most_productive_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of check-ins on the most productive day",
+          "example": 18
+        },
+        "current_streak": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Current consecutive days with check-ins leading up to today",
+          "example": 5
+        },
+        "longest_streak": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Longest consecutive days with check-ins in this month",
+          "example": 10
+        }
+      }
+    },
+    "ColorLegend": {
+      "type": "object",
+      "required": ["buckets"],
+      "properties": {
+        "buckets": {
+          "type": "array",
+          "description": "Array of 6 color buckets (0=none, 1=minimal, 2=low, 3=medium, 4=high, 5=complete)",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/definitions/ColorBucket"
+          }
+        }
+      }
+    },
+    "ColorBucket": {
+      "type": "object",
+      "required": [
+        "index",
+        "label",
+        "min_progress",
+        "max_progress",
+        "color",
+        "description"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Bucket index (0-5)",
+          "example": 3
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable label for this bucket",
+          "example": "Medium"
+        },
+        "min_progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Minimum progress percentage (inclusive)",
+          "example": 50.0
+        },
+        "max_progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Maximum progress percentage (inclusive)",
+          "example": 74.9
+        },
+        "color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "Hex color code for this bucket",
+          "example": "#34d399"
+        },
+        "description": {
+          "type": "string",
+          "description": "Usage description for this bucket",
+          "example": "Half to three-quarters of day tracked"
+        }
+      }
+    },
+    "MonthNavigation": {
+      "type": "object",
+      "required": ["previous_month", "next_month", "current_month"],
+      "properties": {
+        "previous_month": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}$",
+          "description": "Previous month in YYYY-MM format",
+          "example": "2024-10"
+        },
+        "next_month": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}$",
+          "description": "Next month in YYYY-MM format",
+          "example": "2024-12"
+        },
+        "current_month": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}$",
+          "description": "Current month in YYYY-MM format",
+          "example": "2024-11"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,223 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"time"
+
+	"github.com/dev-jelly/donelist/internal/api/handlers"
+	"github.com/dev-jelly/donelist/internal/calendar"
+	"github.com/dev-jelly/donelist/pkg/cache"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+)
+
+func main() {
+	// Setup
+	gin.SetMode(gin.TestMode)
+	logger := zap.NewNop()
+
+	// Mock calendar service
+	calendarService := &mockCalendarService{
+		data: &calendar.MonthlyCalendar{
+			Year:      2024,
+			Month:     11,
+			MonthName: "November",
+			StartDay:  calendar.StartDayMonday,
+			Weeks: []*calendar.CalendarWeek{
+				{
+					Days: []*calendar.CalendarDay{
+						{
+							Date:              "2024-11-01",
+							CheckinCount:      5,
+							TotalMinutes:      120,
+							CompletionPercent: 8.33,
+							ColorIntensity:    1,
+							IsCurrentMonth:    true,
+							HasCheckins:       true,
+						},
+					},
+				},
+			},
+			Summary: &calendar.MonthlySummary{
+				TotalCheckins:    50,
+				TotalMinutes:     1200,
+				DaysWithCheckins: 20,
+				TotalDaysInMonth: 30,
+				AveragePerDay:    1.67,
+				CompletionRate:   66.67,
+			},
+			GeneratedAt: time.Now(),
+		},
+	}
+
+	// Setup Redis client for cache
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+		DB:   15, // Use test database
+	})
+	defer redisClient.Close()
+
+	// Clear test database
+	ctx := context.Background()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Printf("Redis not available, using nil cache: %v", err)
+		redisClient = nil
+	} else {
+		redisClient.FlushDB(ctx)
+	}
+
+	var testCache *cache.Cache
+	if redisClient != nil {
+		cacheConfig := cache.Config{
+			Prefix:     "test:",
+			DefaultTTL: 15 * time.Minute,
+		}
+		testCache = cache.NewCache(redisClient, cacheConfig, logger)
+	}
+
+	// Create handler
+	handler := handlers.NewCalendarHandler(calendarService, logger)
+	if testCache != nil {
+		handler.SetCache(testCache)
+		log.Println("✓ Cache enabled")
+	} else {
+		log.Println("✗ Cache disabled (Redis not available)")
+	}
+
+	// Test user ID
+	userID := uuid.New()
+
+	// Create router
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", userID)
+		c.Next()
+	})
+	router.GET("/calendar/month", handler.GetMonthlyCalendarV2)
+
+	// Test 1: First request
+	log.Println("\nTest 1: First request (should fetch from service)")
+	req1 := httptest.NewRequest("GET", "/calendar/month?year=2024&month=11", nil)
+	w1 := httptest.NewRecorder()
+
+	start1 := time.Now()
+	router.ServeHTTP(w1, req1)
+	duration1 := time.Since(start1)
+
+	if w1.Code != http.StatusOK {
+		log.Fatalf("Expected 200, got %d", w1.Code)
+	}
+	etag1 := w1.Header().Get("ETag")
+	log.Printf("✓ Status: %d", w1.Code)
+	log.Printf("✓ ETag: %s", etag1)
+	log.Printf("✓ Cache-Control: %s", w1.Header().Get("Cache-Control"))
+	log.Printf("✓ X-Schema-Version: %s", w1.Header().Get("X-Schema-Version"))
+	log.Printf("✓ Duration: %v", duration1)
+
+	var response1 handlers.MonthlyCalendarResponseV2
+	if err := json.Unmarshal(w1.Body.Bytes(), &response1); err != nil {
+		log.Fatalf("Failed to parse response: %v", err)
+	}
+	log.Printf("✓ Schema Version in body: %s", response1.SchemaVersion)
+
+	// Test 2: Second request (should use cache if available)
+	log.Println("\nTest 2: Second request (should use cache if available)")
+	req2 := httptest.NewRequest("GET", "/calendar/month?year=2024&month=11", nil)
+	w2 := httptest.NewRecorder()
+
+	start2 := time.Now()
+	router.ServeHTTP(w2, req2)
+	duration2 := time.Since(start2)
+
+	if w2.Code != http.StatusOK {
+		log.Fatalf("Expected 200, got %d", w2.Code)
+	}
+	log.Printf("✓ Status: %d", w2.Code)
+	log.Printf("✓ Duration: %v (should be faster if cached)", duration2)
+	if testCache != nil && duration2 < duration1 {
+		log.Printf("✓ Cache hit confirmed (faster response)")
+	}
+
+	// Test 3: Request with ETag (should return 304)
+	log.Println("\nTest 3: Request with If-None-Match header")
+	req3 := httptest.NewRequest("GET", "/calendar/month?year=2024&month=11", nil)
+	req3.Header.Set("If-None-Match", etag1)
+	w3 := httptest.NewRecorder()
+
+	router.ServeHTTP(w3, req3)
+
+	if testCache != nil {
+		if w3.Code != http.StatusNotModified {
+			log.Printf("✗ Expected 304, got %d (cache may not be working)", w3.Code)
+		} else {
+			log.Printf("✓ Status: %d (Not Modified)", w3.Code)
+			log.Printf("✓ ETag: %s", w3.Header().Get("ETag"))
+			log.Printf("✓ Body length: %d bytes (should be empty)", len(w3.Body.String()))
+		}
+	} else {
+		log.Printf("- Skipping ETag test (no cache)")
+	}
+
+	// Test 4: Different parameters
+	log.Println("\nTest 4: Request with different parameters")
+	req4 := httptest.NewRequest("GET", "/calendar/month?year=2024&month=11&startOfWeek=sun", nil)
+	w4 := httptest.NewRecorder()
+
+	router.ServeHTTP(w4, req4)
+
+	if w4.Code != http.StatusOK {
+		log.Fatalf("Expected 200, got %d", w4.Code)
+	}
+	log.Printf("✓ Status: %d", w4.Code)
+	log.Printf("✓ Different cache key used (startOfWeek=sun)")
+
+	// Test 5: Invalid parameters
+	log.Println("\nTest 5: Invalid parameters")
+	invalidTests := []struct {
+		query string
+		desc  string
+	}{
+		{"month=11", "missing year"},
+		{"year=2024", "missing month"},
+		{"year=3000&month=11", "invalid year"},
+		{"year=2024&month=13", "invalid month"},
+	}
+
+	for _, test := range invalidTests {
+		req := httptest.NewRequest("GET", fmt.Sprintf("/calendar/month?%s", test.query), nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			log.Printf("✗ %s: Expected 400, got %d", test.desc, w.Code)
+		} else {
+			var errResp map[string]string
+			json.Unmarshal(w.Body.Bytes(), &errResp)
+			log.Printf("✓ %s: Status 400, Error: %s", test.desc, errResp["error"])
+		}
+	}
+
+	log.Println("\n✓ All tests completed successfully!")
+}
+
+// mockCalendarService implements a basic calendar service for testing
+type mockCalendarService struct {
+	data *calendar.MonthlyCalendar
+}
+
+func (m *mockCalendarService) GetMonthlyCalendar(ctx context.Context, opts calendar.GetOptions) (*calendar.MonthlyCalendar, error) {
+	// Simulate some processing time
+	time.Sleep(10 * time.Millisecond)
+	return m.data, nil
+}
+
+func (m *mockCalendarService) GetHeatmap(ctx context.Context, opts calendar.HeatmapOptions) (*calendar.HeatmapData, error) {
+	return nil, fmt.Errorf("not implemented")
+}

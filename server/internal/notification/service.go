@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -18,18 +19,23 @@ type Service struct {
 	scheduler       *Scheduler
 	settingsEngine  *SettingsEngine
 	settingsRepo    *SettingsRepository
+	intervalChecker *IntervalChecker
 }
 
 // ServiceConfig holds service configuration
 type ServiceConfig struct {
 	QueueConfig     QueueConfig
 	SchedulerConfig *SchedulerConfig
+	RedisClient     *redis.Client
 }
 
 // NewService creates a new notification service
 func NewService(db *sqlx.DB, logger *zap.Logger, config *ServiceConfig) (*Service, error) {
-	// Initialize queue
-	queue := NewQueue(db, config.QueueConfig, logger)
+	// Initialize queue with Redis
+	var queue *Queue
+	if config.RedisClient != nil {
+		queue = NewQueue(config.RedisClient, logger, config.QueueConfig)
+	}
 
 	// Initialize settings repository
 	settingsRepo := NewSettingsRepository(db, logger)
@@ -53,6 +59,11 @@ func NewService(db *sqlx.DB, logger *zap.Logger, config *ServiceConfig) (*Servic
 	}, nil
 }
 
+// SetIntervalChecker sets the interval checker for the service
+func (s *Service) SetIntervalChecker(intervalChecker *IntervalChecker) {
+	s.intervalChecker = intervalChecker
+}
+
 // Start starts the notification service
 func (s *Service) Start(ctx context.Context) error {
 	s.logger.Info("Starting notification service")
@@ -64,6 +75,12 @@ func (s *Service) Start(ctx context.Context) error {
 
 	// Start reminder processing cron job
 	go s.processRemindersLoop(ctx)
+
+	// Start interval checker if configured
+	if s.intervalChecker != nil {
+		go s.intervalChecker.StartIntervalCheckLoop(ctx)
+		s.logger.Info("Started interval checker")
+	}
 
 	s.logger.Info("Notification service started successfully")
 	return nil
@@ -117,12 +134,29 @@ func (s *Service) SendNotification(ctx context.Context, notification *Notificati
 		)
 	}
 
-	// Enqueue the notification
-	if err := s.queue.Enqueue(ctx, notification); err != nil {
-		return fmt.Errorf("failed to enqueue notification: %w", err)
+	// Enqueue the notification - convert to job format
+	if s.queue != nil {
+		job := notificationToJob(notification)
+		if err := s.queue.Enqueue(ctx, job); err != nil {
+			return fmt.Errorf("failed to enqueue notification: %w", err)
+		}
 	}
 
 	return nil
+}
+
+// notificationToJob converts a Notification to a NotificationJob
+func notificationToJob(n *Notification) *NotificationJob {
+	return &NotificationJob{
+		ID:          n.ID.String(),
+		UserID:      n.UserID,
+		Type:        string(n.Type),
+		Payload:     n.Data,
+		ScheduledAt: n.ScheduledFor,
+		CreatedAt:   n.CreatedAt,
+		Attempts:    n.RetryCount,
+		MaxAttempts: n.MaxRetries,
+	}
 }
 
 // SendBatchNotifications sends multiple notifications with settings applied
@@ -139,13 +173,16 @@ func (s *Service) SendBatchNotifications(ctx context.Context, notifications []*N
 	)
 
 	// Enqueue filtered notifications
-	for _, notification := range filtered {
-		if err := s.queue.Enqueue(ctx, notification); err != nil {
-			s.logger.Error("Failed to enqueue notification",
-				zap.String("notification_id", notification.ID.String()),
-				zap.Error(err),
-			)
-			// Continue with other notifications
+	if s.queue != nil {
+		for _, notification := range filtered {
+			job := notificationToJob(notification)
+			if err := s.queue.Enqueue(ctx, job); err != nil {
+				s.logger.Error("Failed to enqueue notification",
+					zap.String("notification_id", notification.ID.String()),
+					zap.Error(err),
+				)
+				// Continue with other notifications
+			}
 		}
 	}
 

@@ -104,7 +104,7 @@ func ExampleManualDetection(ctx context.Context, manager *SecurityManager, userI
 // ExampleBlockManagement demonstrates block operations
 func ExampleBlockManagement(ctx context.Context, blocker *AutoBlocker) error {
 	identifier := "suspicious-user-123"
-	ipAddress := "1.2.3.4"
+	_ = "1.2.3.4" // Example IP address for documentation
 
 	// Check if blocked
 	isBlocked, err := blocker.IsBlocked(ctx, identifier)

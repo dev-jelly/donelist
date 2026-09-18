@@ -32,11 +32,11 @@ func (qb *QueryBuilder) AddFullTextSearch(query string) {
 		return
 	}
 
-	// Sanitize the search query by converting to tsquery format
-	// This prevents SQL injection by using parameterized queries
-	tsQuery := sanitizeTsQuery(query)
+	// Use Korean-aware sanitization for better multilingual support
+	tsQuery := SanitizeQueryForKorean(query)
 
-	qb.addWhere(fmt.Sprintf("search_vector @@ to_tsquery('english', $%d)", qb.argIndex))
+	// Use 'simple' configuration for better Korean support (no stemming)
+	qb.addWhere(fmt.Sprintf("search_vector @@ to_tsquery('simple', $%d)", qb.argIndex))
 	qb.args = append(qb.args, tsQuery)
 	qb.argIndex++
 }

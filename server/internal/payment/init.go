@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dev-jelly/donelist/internal/config"
+	"github.com/dev-jelly/donelist/internal/subscription"
 	"go.uber.org/zap"
 )
 
@@ -15,6 +16,13 @@ type Manager struct {
 	ProductManager *ProductManager
 	WebhookHandler *WebhookHandler
 	logger         *zap.Logger
+}
+
+// ManagerConfig contains configuration for creating a payment manager
+type ManagerConfig struct {
+	StripeConfig     *config.StripeConfig
+	SubscriptionRepo interface{} // Will be *subscription.Repository, but avoid circular dependency
+	Logger           *zap.Logger
 }
 
 // NewManager creates a new payment manager with all services initialized
@@ -37,7 +45,10 @@ func NewManager(cfg *config.StripeConfig, logger *zap.Logger) (*Manager, error) 
 	// Initialize services
 	service := NewService(client, logger)
 	productManager := NewProductManager(client, logger)
-	webhookHandler := NewWebhookHandler(service, logger)
+
+	// Note: WebhookHandler needs subscription repository, which should be set later
+	// via SetSubscriptionRepository method
+	webhookHandler := NewWebhookHandler(service, nil, logger)
 
 	manager := &Manager{
 		Client:         client,
@@ -63,6 +74,17 @@ func NewManager(cfg *config.StripeConfig, logger *zap.Logger) (*Manager, error) 
 	}
 
 	return manager, nil
+}
+
+// SetSubscriptionRepository sets the subscription repository for webhook handler
+// This is needed to avoid circular dependencies during initialization
+func (m *Manager) SetSubscriptionRepository(repo interface{}) {
+	if m != nil && m.WebhookHandler != nil {
+		// Type assert to subscription.Repository
+		if subRepo, ok := repo.(*subscription.Repository); ok {
+			m.WebhookHandler.subscriptionRepo = subRepo
+		}
+	}
 }
 
 // SyncProducts syncs local plan definitions with Stripe

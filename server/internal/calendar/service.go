@@ -275,3 +275,92 @@ func (s *Service) buildCategoryBreakdown(categoryAggs []CategoryAggregate, daily
 
 	return breakdown
 }
+
+// HeatmapOptions represents options for getting heatmap data
+type HeatmapOptions struct {
+	UserID    uuid.UUID
+	StartDate time.Time // Start of date range
+	EndDate   time.Time // End of date range
+	Timezone  string    // IANA timezone (e.g., "America/New_York", "Asia/Seoul")
+}
+
+// GetHeatmap generates heatmap data for a date range
+func (s *Service) GetHeatmap(ctx context.Context, opts HeatmapOptions) (*HeatmapData, error) {
+	// Load timezone
+	loc := time.UTC
+	if opts.Timezone != "" {
+		var err error
+		loc, err = time.LoadLocation(opts.Timezone)
+		if err != nil {
+			s.logger.Warn("Invalid timezone, using UTC", zap.String("timezone", opts.Timezone), zap.Error(err))
+			loc = time.UTC
+		}
+	}
+
+	// Normalize dates to start of day in the specified timezone
+	startOfDay := time.Date(opts.StartDate.Year(), opts.StartDate.Month(), opts.StartDate.Day(), 0, 0, 0, 0, loc)
+	endOfDay := time.Date(opts.EndDate.Year(), opts.EndDate.Month(), opts.EndDate.Day(), 23, 59, 59, 999999999, loc)
+
+	// Convert to UTC for database queries
+	startOfDayUTC := startOfDay.UTC()
+	endOfDayUTC := endOfDay.UTC()
+
+	// Get daily aggregates from repository
+	aggregates, err := s.calendarRepo.GetDailyAggregates(ctx, opts.UserID, startOfDayUTC, endOfDayUTC)
+	if err != nil {
+		s.logger.Error("Failed to get daily aggregates for heatmap", zap.Error(err))
+		return nil, fmt.Errorf("failed to get daily aggregates: %w", err)
+	}
+
+	// Build map for quick lookup
+	aggregateMap := make(map[string]DailyAggregate)
+	for _, agg := range aggregates {
+		// Convert UTC date to local timezone
+		localDate := agg.Date.In(loc)
+		dateKey := localDate.Format("2006-01-02")
+		aggregateMap[dateKey] = agg
+	}
+
+	// Build heatmap data
+	var days []*HeatmapDay
+	var activeDays int
+	var totalCheckins int
+
+	currentDay := startOfDay
+	for !currentDay.After(endOfDay) {
+		dateKey := currentDay.Format("2006-01-02")
+		agg, hasData := aggregateMap[dateKey]
+
+		day := &HeatmapDay{
+			Date:              dateKey,
+			CheckinCount:      0,
+			TotalMinutes:      0,
+			CompletionPercent: 0,
+			ColorIntensity:    0,
+		}
+
+		if hasData {
+			day.CheckinCount = agg.CheckinCount
+			day.TotalMinutes = agg.TotalMinutes
+			day.CompletionPercent = CalculateCompletionPercent(agg.TotalMinutes)
+			day.ColorIntensity = GetColorIntensity(day.CompletionPercent)
+			activeDays++
+			totalCheckins += agg.CheckinCount
+		}
+
+		days = append(days, day)
+		currentDay = currentDay.AddDate(0, 0, 1)
+	}
+
+	totalDays := int(endOfDay.Sub(startOfDay).Hours()/24) + 1
+
+	return &HeatmapData{
+		StartDate:     startOfDay.Format("2006-01-02"),
+		EndDate:       endOfDay.Format("2006-01-02"),
+		Days:          days,
+		TotalDays:     totalDays,
+		ActiveDays:    activeDays,
+		TotalCheckins: totalCheckins,
+		GeneratedAt:   time.Now().UTC(),
+	}, nil
+}

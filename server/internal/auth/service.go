@@ -275,14 +275,14 @@ func (s *Service) LogoutAll(ctx context.Context, userID uuid.UUID) error {
 
 // generateTokenPair generates both access and refresh tokens with JTI tracking
 func (s *Service) generateTokenPair(ctx context.Context, u *user.User) (*TokenPair, error) {
-	// Generate access token
-	accessToken, err := s.jwtManager.GenerateAccessToken(u.ID, u.Email)
+	// Generate access token with role
+	accessToken, err := s.jwtManager.GenerateAccessTokenWithRole(u.ID, u.Email, u.Role)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access token: %w", err)
 	}
 
-	// Generate refresh token
-	refreshToken, err := s.jwtManager.GenerateRefreshToken(u.ID, u.Email)
+	// Generate refresh token with role
+	refreshToken, err := s.jwtManager.GenerateRefreshTokenWithRole(u.ID, u.Email, u.Role)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
 	}

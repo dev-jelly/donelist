@@ -362,6 +362,274 @@ func (s *Service) SetDefaultPaymentMethod(ctx context.Context, customerID, payme
 	return nil
 }
 
+// CreateBillingPortalSession creates a Stripe billing portal session
+func (s *Service) CreateBillingPortalSession(ctx context.Context, customerID, returnURL string) (*stripe.BillingPortalSession, error) {
+	params := &stripe.BillingPortalSessionParams{
+		Customer:  stripe.String(customerID),
+		ReturnURL: stripe.String(returnURL),
+	}
+
+	session, err := s.client.GetClient().BillingPortalSessions.New(params)
+	if err != nil {
+		s.logger.Error("Failed to create billing portal session",
+			zap.Error(err),
+			zap.String("customer_id", customerID),
+		)
+		return nil, fmt.Errorf("failed to create billing portal session: %w", err)
+	}
+
+	s.logger.Info("Created billing portal session",
+		zap.String("session_id", session.ID),
+		zap.String("customer_id", customerID),
+	)
+
+	return session, nil
+}
+
+// GetCustomer retrieves a Stripe customer
+func (s *Service) GetCustomer(ctx context.Context, customerID string) (*stripe.Customer, error) {
+	customer, err := s.client.GetClient().Customers.Get(customerID, nil)
+	if err != nil {
+		s.logger.Error("Failed to get customer",
+			zap.Error(err),
+			zap.String("customer_id", customerID),
+		)
+		return nil, fmt.Errorf("failed to get customer: %w", err)
+	}
+
+	return customer, nil
+}
+
+// ListCustomerPaymentMethods lists payment methods for a customer
+func (s *Service) ListCustomerPaymentMethods(ctx context.Context, customerID string) ([]*stripe.PaymentMethod, error) {
+	params := &stripe.PaymentMethodListParams{
+		Customer: stripe.String(customerID),
+		Type:     stripe.String("card"),
+	}
+
+	var methods []*stripe.PaymentMethod
+	iter := s.client.GetClient().PaymentMethods.List(params)
+	for iter.Next() {
+		methods = append(methods, iter.PaymentMethod())
+	}
+
+	if err := iter.Err(); err != nil {
+		s.logger.Error("Failed to list payment methods",
+			zap.Error(err),
+			zap.String("customer_id", customerID),
+		)
+		return nil, fmt.Errorf("failed to list payment methods: %w", err)
+	}
+
+	return methods, nil
+}
+
+// DetachPaymentMethod detaches a payment method from a customer
+func (s *Service) DetachPaymentMethod(ctx context.Context, paymentMethodID string) error {
+	_, err := s.client.GetClient().PaymentMethods.Detach(paymentMethodID, nil)
+	if err != nil {
+		s.logger.Error("Failed to detach payment method",
+			zap.Error(err),
+			zap.String("payment_method_id", paymentMethodID),
+		)
+		return fmt.Errorf("failed to detach payment method: %w", err)
+	}
+
+	s.logger.Info("Detached payment method",
+		zap.String("payment_method_id", paymentMethodID),
+	)
+
+	return nil
+}
+
+// ReactivateSubscription reactivates a canceled subscription
+func (s *Service) ReactivateSubscription(ctx context.Context, subscriptionID string) (*stripe.Subscription, error) {
+	params := &stripe.SubscriptionParams{
+		CancelAtPeriodEnd: stripe.Bool(false),
+	}
+
+	sub, err := s.client.GetClient().Subscriptions.Update(subscriptionID, params)
+	if err != nil {
+		s.logger.Error("Failed to reactivate subscription",
+			zap.Error(err),
+			zap.String("subscription_id", subscriptionID),
+		)
+		return nil, fmt.Errorf("failed to reactivate subscription: %w", err)
+	}
+
+	s.logger.Info("Reactivated subscription",
+		zap.String("subscription_id", subscriptionID),
+	)
+
+	return sub, nil
+}
+
+// UpdateSubscriptionPlan updates a subscription to a new plan with proration
+func (s *Service) UpdateSubscriptionPlan(ctx context.Context, subscriptionID string, newPriceID string, prorationBehavior string) (*stripe.Subscription, error) {
+	// Get current subscription to find the item to update
+	sub, err := s.client.GetClient().Subscriptions.Get(subscriptionID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get subscription: %w", err)
+	}
+
+	if len(sub.Items.Data) == 0 {
+		return nil, fmt.Errorf("subscription has no items")
+	}
+
+	// Update the subscription with the new price
+	params := &stripe.SubscriptionParams{
+		ProrationBehavior: stripe.String(prorationBehavior),
+		Items: []*stripe.SubscriptionItemsParams{
+			{
+				ID:    stripe.String(sub.Items.Data[0].ID),
+				Price: stripe.String(newPriceID),
+			},
+		},
+	}
+
+	updatedSub, err := s.client.GetClient().Subscriptions.Update(subscriptionID, params)
+	if err != nil {
+		s.logger.Error("Failed to update subscription plan",
+			zap.Error(err),
+			zap.String("subscription_id", subscriptionID),
+			zap.String("new_price_id", newPriceID),
+		)
+		return nil, fmt.Errorf("failed to update subscription plan: %w", err)
+	}
+
+	s.logger.Info("Updated subscription plan",
+		zap.String("subscription_id", subscriptionID),
+		zap.String("new_price_id", newPriceID),
+		zap.String("proration_behavior", prorationBehavior),
+	)
+
+	return updatedSub, nil
+}
+
+// CreateRefund creates a refund for a payment
+func (s *Service) CreateRefund(ctx context.Context, params *RefundParams) (*stripe.Refund, error) {
+	refundParams := &stripe.RefundParams{
+		Metadata: map[string]string{
+			"user_id": params.UserID.String(),
+		},
+	}
+
+	// Either charge or payment intent must be specified
+	if params.ChargeID != "" {
+		refundParams.Charge = stripe.String(params.ChargeID)
+	} else if params.PaymentIntentID != "" {
+		refundParams.PaymentIntent = stripe.String(params.PaymentIntentID)
+	} else {
+		return nil, fmt.Errorf("either charge_id or payment_intent_id must be specified")
+	}
+
+	// Amount is optional - if not specified, full refund
+	if params.Amount > 0 {
+		refundParams.Amount = stripe.Int64(int64(params.Amount))
+	}
+
+	if params.Reason != "" {
+		refundParams.Reason = stripe.String(params.Reason)
+	}
+
+	refund, err := s.client.GetClient().Refunds.New(refundParams)
+	if err != nil {
+		s.logger.Error("Failed to create refund",
+			zap.Error(err),
+			zap.String("user_id", params.UserID.String()),
+			zap.String("charge_id", params.ChargeID),
+			zap.String("payment_intent_id", params.PaymentIntentID),
+		)
+		return nil, fmt.Errorf("failed to create refund: %w", err)
+	}
+
+	s.logger.Info("Created refund",
+		zap.String("refund_id", refund.ID),
+		zap.String("user_id", params.UserID.String()),
+		zap.Int64("amount", refund.Amount),
+		zap.String("status", string(refund.Status)),
+	)
+
+	return refund, nil
+}
+
+// GetRefund retrieves a refund by ID
+func (s *Service) GetRefund(ctx context.Context, refundID string) (*stripe.Refund, error) {
+	refund, err := s.client.GetClient().Refunds.Get(refundID, nil)
+	if err != nil {
+		s.logger.Error("Failed to get refund",
+			zap.Error(err),
+			zap.String("refund_id", refundID),
+		)
+		return nil, fmt.Errorf("failed to get refund: %w", err)
+	}
+
+	return refund, nil
+}
+
+// ListRefunds lists refunds for a payment intent or charge
+func (s *Service) ListRefunds(ctx context.Context, params *ListRefundsParams) ([]*stripe.Refund, error) {
+	listParams := &stripe.RefundListParams{}
+
+	if params.ChargeID != "" {
+		listParams.Charge = stripe.String(params.ChargeID)
+	}
+	if params.PaymentIntentID != "" {
+		listParams.PaymentIntent = stripe.String(params.PaymentIntentID)
+	}
+	if params.Limit > 0 {
+		listParams.Limit = stripe.Int64(int64(params.Limit))
+	}
+
+	var refunds []*stripe.Refund
+	iter := s.client.GetClient().Refunds.List(listParams)
+	for iter.Next() {
+		refunds = append(refunds, iter.Refund())
+	}
+
+	if err := iter.Err(); err != nil {
+		s.logger.Error("Failed to list refunds",
+			zap.Error(err),
+			zap.String("charge_id", params.ChargeID),
+			zap.String("payment_intent_id", params.PaymentIntentID),
+		)
+		return nil, fmt.Errorf("failed to list refunds: %w", err)
+	}
+
+	return refunds, nil
+}
+
+// CancelSubscriptionWithRefund cancels a subscription and optionally provides a prorated refund
+func (s *Service) CancelSubscriptionWithRefund(ctx context.Context, subscriptionID string, immediately bool, provideRefund bool) (*stripe.Subscription, error) {
+	params := &stripe.SubscriptionParams{}
+
+	if immediately {
+		params.CancelAtPeriodEnd = stripe.Bool(false)
+		if provideRefund {
+			params.ProrationBehavior = stripe.String(string(stripe.SubscriptionSchedulePhaseProrationBehaviorCreateProrations))
+		}
+	} else {
+		params.CancelAtPeriodEnd = stripe.Bool(true)
+	}
+
+	sub, err := s.client.GetClient().Subscriptions.Update(subscriptionID, params)
+	if err != nil {
+		s.logger.Error("Failed to cancel subscription with refund",
+			zap.Error(err),
+			zap.String("subscription_id", subscriptionID),
+		)
+		return nil, fmt.Errorf("failed to cancel subscription: %w", err)
+	}
+
+	s.logger.Info("Cancelled subscription",
+		zap.String("subscription_id", subscriptionID),
+		zap.Bool("immediately", immediately),
+		zap.Bool("provide_refund", provideRefund),
+	)
+
+	return sub, nil
+}
+
 // VerifyWebhookSignature verifies a Stripe webhook signature
 func (s *Service) VerifyWebhookSignature(payload []byte, signature string) (*stripe.Event, error) {
 	event, err := webhook.ConstructEvent(payload, signature, s.client.GetWebhookSecret())
@@ -441,4 +709,20 @@ type PaymentIntentParams struct {
 	Currency        string
 	Description     string
 	PaymentMethodID string
+}
+
+// RefundParams contains parameters for creating a refund
+type RefundParams struct {
+	UserID          uuid.UUID
+	ChargeID        string // Either ChargeID or PaymentIntentID must be specified
+	PaymentIntentID string
+	Amount          int    // Optional - if 0, full refund
+	Reason          string // Optional - reason for refund
+}
+
+// ListRefundsParams contains parameters for listing refunds
+type ListRefundsParams struct {
+	ChargeID        string
+	PaymentIntentID string
+	Limit           int
 }

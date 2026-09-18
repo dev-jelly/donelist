@@ -54,7 +54,7 @@ func (h *TimelineHandler) GetDaily(c *gin.Context) {
 }
 
 // GetDailyEnhanced retrieves an enhanced daily timeline with time blocks and analytics
-// GET /timeline/daily/enhanced?date=2006-01-02&block=30&timezone=America/New_York
+// GET /timeline/daily/enhanced?date=2006-01-02&block=30&timezone=America/New_York&cursor=xyz&limit=48
 func (h *TimelineHandler) GetDailyEnhanced(c *gin.Context) {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {
@@ -84,11 +84,53 @@ func (h *TimelineHandler) GetDailyEnhanced(c *gin.Context) {
 	// Parse timezone (default to UTC)
 	timezone := c.DefaultQuery("timezone", "UTC")
 
-	enhancedView, err := h.timelineService.GetDailyEnhanced(c.Request.Context(), userID, date, blockGranularity, timezone)
+	// Parse pagination parameters
+	cursor := c.Query("cursor")
+	limit := 0
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if _, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil {
+			h.logger.Warn("Invalid limit", zap.String("limit", limitStr), zap.Error(err))
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit parameter"})
+			return
+		}
+		if limit < 0 || limit > 1000 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 0 and 1000"})
+			return
+		}
+	}
+
+	enhancedView, err := h.timelineService.GetDailyEnhancedPaginated(c.Request.Context(), userID, date, blockGranularity, timezone, cursor, limit)
 	if err != nil {
 		h.logger.Error("Failed to get enhanced daily timeline", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get enhanced daily timeline"})
 		return
+	}
+
+	// Check for If-None-Match header (ETag support)
+	if ifNoneMatch := c.GetHeader("If-None-Match"); ifNoneMatch != "" {
+		// For non-paginated requests with cache
+		if cursor == "" && limit == 0 {
+			// Compare with current ETag
+			// Note: ETag generation should be consistent
+			// We'll generate it from the view for comparison
+			// In production, you'd use the cached ETag
+			c.Header("ETag", fmt.Sprintf(`"%s"`, enhancedView.GeneratedAt.Format(time.RFC3339)))
+			if ifNoneMatch == fmt.Sprintf(`"%s"`, enhancedView.GeneratedAt.Format(time.RFC3339)) {
+				c.Status(http.StatusNotModified)
+				return
+			}
+		}
+	}
+
+	// Set cache headers
+	if cursor == "" && limit == 0 {
+		// Only cache non-paginated requests
+		c.Header("Cache-Control", "private, max-age=300") // 5 minutes
+		c.Header("ETag", fmt.Sprintf(`"%s"`, enhancedView.GeneratedAt.Format(time.RFC3339)))
+		c.Header("Last-Modified", enhancedView.GeneratedAt.Format(http.TimeFormat))
+	} else {
+		// Don't cache paginated requests
+		c.Header("Cache-Control", "no-cache")
 	}
 
 	c.JSON(http.StatusOK, enhancedView)

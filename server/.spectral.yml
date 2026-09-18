@@ -1,0 +1,109 @@
+extends: ["spectral:oas"]
+
+rules:
+  # Enable all recommended rules
+  operation-operationId: error
+  operation-parameters: error
+  operation-tag-defined: error
+  path-params: error
+
+  # API design rules
+  operation-description: warn
+  operation-success-response: error
+
+  # Security rules
+  oas3-operation-security-defined: error
+
+  # Schema rules
+  oas3-schema: error
+  typed-enum: warn
+
+  # Naming conventions
+  operation-operationId-valid-in-url:
+    description: Operation IDs should be valid URL paths
+    given: $.paths[*][*].operationId
+    severity: warn
+    then:
+      function: pattern
+      functionOptions:
+        match: "^[a-z][a-zA-Z0-9]*$"
+
+  # Custom rules for DoneList API
+  path-keys-no-trailing-slash:
+    description: Path keys should not have trailing slashes
+    given: $.paths[*]~
+    severity: error
+    then:
+      function: pattern
+      functionOptions:
+        notMatch: "/$"
+
+  request-id-header:
+    description: Operations should include X-Request-ID parameter
+    given: $.paths[*][get,post,put,patch,delete].parameters
+    severity: warn
+    then:
+      function: schema
+      functionOptions:
+        schema:
+          type: array
+          contains:
+            type: object
+            properties:
+              name:
+                const: X-Request-ID
+
+  error-response-schema:
+    description: Error responses should use standard error schema
+    given: $.paths[*][*].responses[?(@property >= '400' && @property < '600')]
+    severity: error
+    then:
+      field: content.application/json.schema.$ref
+      function: truthy
+
+  success-response-examples:
+    description: Success responses should include examples
+    given: $.paths[*][*].responses[?(@property >= '200' && @property < '300')].content.application/json
+    severity: warn
+    then:
+      field: examples
+      function: truthy
+
+  # Pagination rules (commented out - requires JSONPath with regex which may not be supported)
+  # pagination-parameters:
+  #   description: List operations should include pagination parameters
+  #   given: $.paths[*].get.parameters
+  #   severity: warn
+  #   then:
+  #     function: schema
+  #     functionOptions:
+  #       schema:
+  #         type: array
+
+  # Versioning
+  api-version-in-url:
+    description: API version should be in URL path
+    given: $.servers[*].url
+    severity: error
+    then:
+      function: pattern
+      functionOptions:
+        match: "/v[0-9]+"
+
+  # Security
+  bearer-auth-defined:
+    description: Bearer authentication should be defined
+    given: $.components.securitySchemes
+    severity: error
+    then:
+      field: BearerAuth
+      function: truthy
+
+  # Response headers
+  rate-limit-headers:
+    description: Rate-limited endpoints should document rate limit headers
+    given: $.paths[*][*].responses[429].headers
+    severity: warn
+    then:
+      field: X-RateLimit-Limit
+      function: truthy

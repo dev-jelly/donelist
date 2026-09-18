@@ -1,0 +1,247 @@
+name: Contract Tests
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'docs/api/openapi.yaml'
+      - 'internal/api/**'
+      - 'internal/category/**'
+      - 'internal/tag/**'
+      - 'internal/calendar/**'
+      - 'internal/timeline/**'
+      - '.github/workflows/contract-tests.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'docs/api/openapi.yaml'
+      - 'internal/api/**'
+      - 'internal/category/**'
+      - 'internal/tag/**'
+      - 'internal/calendar/**'
+      - 'internal/timeline/**'
+
+jobs:
+  validate-openapi:
+    name: Validate OpenAPI Specification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Spectral
+        run: npm install -g @stoplight/spectral-cli @apidevtools/swagger-cli
+
+      - name: Validate OpenAPI Spec
+        run: |
+          cd server
+          ./scripts/validate-openapi.sh
+
+      - name: Upload OpenAPI spec as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: openapi-spec
+          path: server/docs/api/openapi.yaml
+
+  contract-tests:
+    name: Run Contract Tests
+    runs-on: ubuntu-latest
+    needs: validate-openapi
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: donelist_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: |
+          cd server
+          go mod download
+
+      - name: Run contract tests
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/donelist_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+        run: |
+          cd server
+          go test -tags=contract -v ./internal/api/handlers/... -run TestContract
+
+      - name: Run calendar contract tests
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/donelist_test?sslmode=disable
+          REDIS_URL: redis://localhost:6379
+        run: |
+          cd server
+          go test -tags=contract -v ./internal/api/handlers/... -run TestCalendarAPI
+
+      - name: Generate test report
+        if: always()
+        run: |
+          cd server
+          go test -tags=contract -v ./internal/api/handlers/... -run "TestContract|TestCalendarAPI" -json > contract-test-report.json || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: contract-test-results
+          path: server/contract-test-report.json
+
+  snapshot-tests:
+    name: Run Snapshot Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        run: |
+          cd server
+          go mod download
+
+      - name: Run calendar snapshot tests
+        run: |
+          cd server
+          go test -v ./internal/calendar/... -run TestSnapshot
+
+      - name: Run calendar edge case tests
+        run: |
+          cd server
+          go test -v ./internal/calendar/... -run "TestMonthlyCalendar_LeapYear|TestMonthlyCalendar_NonLeapYear|TestMonthlyCalendar_YearBoundary"
+
+      - name: Verify snapshots are up to date
+        run: |
+          cd server
+          # Check if there are any changes to snapshot files
+          if [ -n "$(git status --porcelain internal/calendar/testdata/snapshots/)" ]; then
+            echo "::warning::Snapshot files have changed. Please review and commit the changes."
+            git diff internal/calendar/testdata/snapshots/
+            exit 1
+          fi
+
+      - name: Upload snapshot files
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: calendar-snapshots
+          path: server/internal/calendar/testdata/snapshots/
+
+  breaking-change-detection:
+    name: Detect Breaking Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          path: pr
+
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install oasdiff
+        run: npm install -g oasdiff
+
+      - name: Check for breaking changes
+        id: breaking_changes
+        run: |
+          if [ -f "base/server/docs/api/openapi.yaml" ]; then
+            oasdiff breaking base/server/docs/api/openapi.yaml pr/server/docs/api/openapi.yaml > breaking-changes.txt || true
+            if [ -s breaking-changes.txt ]; then
+              echo "has_breaking_changes=true" >> $GITHUB_OUTPUT
+              echo "## ⚠️ Breaking Changes Detected" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat breaking-changes.txt >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            else
+              echo "has_breaking_changes=false" >> $GITHUB_OUTPUT
+              echo "## ✅ No Breaking Changes" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "Base OpenAPI spec not found, skipping breaking change detection"
+            echo "has_breaking_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR
+        if: steps.breaking_changes.outputs.has_breaking_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const breaking = fs.readFileSync('breaking-changes.txt', 'utf8');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ⚠️ Breaking API Changes Detected\n\n\`\`\`\n${breaking}\n\`\`\`\n\nPlease review these changes carefully and update API version if necessary.`
+            });
+
+  generate-api-docs:
+    name: Generate API Documentation
+    runs-on: ubuntu-latest
+    needs: validate-openapi
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Redoc CLI
+        run: npm install -g @redocly/cli
+
+      - name: Generate HTML documentation
+        run: |
+          cd server
+          npx @redocly/cli build-docs docs/api/openapi.yaml -o docs/api/index.html
+
+      - name: Upload API documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: api-documentation
+          path: server/docs/api/index.html

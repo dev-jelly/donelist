@@ -294,11 +294,53 @@ func (s *Service) executeTagOperation(ctx context.Context, userID uuid.UUID, op 
 
 // getServerChanges retrieves changes from the server since last sync
 func (s *Service) getServerChanges(ctx context.Context, userID uuid.UUID, since *time.Time) ([]ServerChange, error) {
-	// TODO: Implement delta sync to get changes since last sync
-	// This would query checkins, categories, tags that were updated since 'since' timestamp
+	if since == nil {
+		// First sync - client needs full sync, return empty for incremental
+		return []ServerChange{}, nil
+	}
 
-	// For now, return empty changes
-	return []ServerChange{}, nil
+	changes := make([]ServerChange, 0)
+
+	// Get checkin changes since last sync
+	checkinChanges, err := s.repo.GetCheckinChangesSince(ctx, userID, *since)
+	if err != nil {
+		s.logger.Warn("Failed to get checkin changes",
+			zap.Error(err),
+			zap.String("user_id", userID.String()),
+		)
+	} else {
+		changes = append(changes, checkinChanges...)
+	}
+
+	// Get category changes since last sync
+	categoryChanges, err := s.repo.GetCategoryChangesSince(ctx, userID, *since)
+	if err != nil {
+		s.logger.Warn("Failed to get category changes",
+			zap.Error(err),
+			zap.String("user_id", userID.String()),
+		)
+	} else {
+		changes = append(changes, categoryChanges...)
+	}
+
+	// Get tag changes since last sync
+	tagChanges, err := s.repo.GetTagChangesSince(ctx, userID, *since)
+	if err != nil {
+		s.logger.Warn("Failed to get tag changes",
+			zap.Error(err),
+			zap.String("user_id", userID.String()),
+		)
+	} else {
+		changes = append(changes, tagChanges...)
+	}
+
+	s.logger.Debug("Retrieved server changes",
+		zap.String("user_id", userID.String()),
+		zap.Int("change_count", len(changes)),
+		zap.Time("since", *since),
+	)
+
+	return changes, nil
 }
 
 // logOperation creates a log entry for an operation
@@ -441,4 +483,190 @@ func (s *Service) CleanupOldOperations(ctx context.Context, retentionDays int) e
 	)
 
 	return nil
+}
+
+// RetryFailedOperations retries failed operations using exponential backoff
+func (s *Service) RetryFailedOperations(ctx context.Context, maxRetries int) (*RetryResult, error) {
+	// Get items ready for retry (respects exponential backoff)
+	items, err := s.repo.GetItemsForRetry(ctx, maxRetries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get items for retry: %w", err)
+	}
+
+	result := &RetryResult{
+		ProcessedCount: len(items),
+	}
+
+	for _, item := range items {
+		// Increment retry count first
+		if err := s.repo.IncrementRetryCount(ctx, item.ID); err != nil {
+			s.logger.Warn("Failed to increment retry count",
+				zap.Error(err),
+				zap.String("item_id", item.ID.String()),
+			)
+			continue
+		}
+
+		// Build operation data for retry
+		op := &SyncOperationData{
+			IdempotencyKey:  item.IdempotencyKey,
+			OperationType:   item.OperationType,
+			ResourceType:    item.ResourceType,
+			ResourceID:      item.ResourceID,
+			ClientTimestamp: item.ClientTimestamp,
+			Data:            item.OperationData,
+		}
+
+		// Attempt the operation
+		opResult := s.processOperation(ctx, item.UserID, op)
+
+		switch opResult.Status {
+		case "success":
+			result.SuccessCount++
+			if err := s.repo.UpdateQueueItemStatus(ctx, item.ID, StatusCompleted, nil, nil); err != nil {
+				s.logger.Warn("Failed to mark item as completed",
+					zap.Error(err),
+					zap.String("item_id", item.ID.String()),
+				)
+			}
+
+		case "failed":
+			result.FailedCount++
+			if err := s.repo.UpdateQueueItemStatus(ctx, item.ID, StatusFailed, opResult.Error, nil); err != nil {
+				s.logger.Warn("Failed to update item status",
+					zap.Error(err),
+					zap.String("item_id", item.ID.String()),
+				)
+			}
+
+			// Check if max retries reached
+			if item.RetryCount+1 >= maxRetries {
+				result.MaxRetriesReachedCount++
+				s.logger.Warn("Max retries reached for operation",
+					zap.String("item_id", item.ID.String()),
+					zap.String("idempotency_key", item.IdempotencyKey),
+					zap.Int("retry_count", item.RetryCount+1),
+				)
+			}
+
+		case "conflicted":
+			result.ConflictCount++
+			conflictData, _ := json.Marshal(opResult.ConflictInfo)
+			if err := s.repo.UpdateQueueItemStatus(ctx, item.ID, StatusConflicted, nil, conflictData); err != nil {
+				s.logger.Warn("Failed to mark item as conflicted",
+					zap.Error(err),
+					zap.String("item_id", item.ID.String()),
+				)
+			}
+		}
+	}
+
+	s.logger.Info("Retry operation completed",
+		zap.Int("processed", result.ProcessedCount),
+		zap.Int("success", result.SuccessCount),
+		zap.Int("failed", result.FailedCount),
+		zap.Int("conflicts", result.ConflictCount),
+		zap.Int("max_retries_reached", result.MaxRetriesReachedCount),
+	)
+
+	return result, nil
+}
+
+// RetryResult contains the results of a retry operation
+type RetryResult struct {
+	ProcessedCount        int `json:"processed_count"`
+	SuccessCount          int `json:"success_count"`
+	FailedCount           int `json:"failed_count"`
+	ConflictCount         int `json:"conflict_count"`
+	MaxRetriesReachedCount int `json:"max_retries_reached_count"`
+}
+
+// GetSyncProgress returns detailed sync progress information for a user
+func (s *Service) GetSyncProgress(ctx context.Context, userID uuid.UUID, deviceID string) (*SyncProgress, error) {
+	status, err := s.repo.GetOrCreateSyncStatus(ctx, userID, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sync status: %w", err)
+	}
+
+	// Get pending operations count
+	pendingOps, err := s.repo.GetPendingOperations(ctx, userID, 1000)
+	if err != nil {
+		s.logger.Warn("Failed to get pending operations", zap.Error(err))
+		pendingOps = []*SyncQueueItem{}
+	}
+
+	// Get conflicted operations
+	conflicts, err := s.repo.GetConflictedOperations(ctx, userID)
+	if err != nil {
+		s.logger.Warn("Failed to get conflicted operations", zap.Error(err))
+		conflicts = []*SyncQueueItem{}
+	}
+
+	progress := &SyncProgress{
+		DeviceID:               deviceID,
+		LastSyncAt:             status.LastSyncAt,
+		LastSuccessfulSyncAt:   status.LastSuccessfulSyncAt,
+		PendingOperationsCount: len(pendingOps),
+		FailedOperationsCount:  status.FailedOperationsCount,
+		ConflictsCount:         len(conflicts),
+		IsUpToDate:             len(pendingOps) == 0 && len(conflicts) == 0,
+		SyncHealth:             s.calculateSyncHealth(status, len(pendingOps), len(conflicts)),
+	}
+
+	// Calculate progress percentage if there's pending work
+	if len(pendingOps) > 0 {
+		// Estimate progress based on what's completed vs pending
+		total := status.PendingOperationsCount + len(pendingOps)
+		if total > 0 {
+			completed := status.PendingOperationsCount - len(pendingOps)
+			if completed < 0 {
+				completed = 0
+			}
+			progress.ProgressPercent = float64(completed) / float64(total) * 100
+		}
+	} else {
+		progress.ProgressPercent = 100
+	}
+
+	return progress, nil
+}
+
+// SyncProgress represents detailed sync progress
+type SyncProgress struct {
+	DeviceID               string     `json:"device_id"`
+	LastSyncAt             *time.Time `json:"last_sync_at,omitempty"`
+	LastSuccessfulSyncAt   *time.Time `json:"last_successful_sync_at,omitempty"`
+	PendingOperationsCount int        `json:"pending_operations_count"`
+	FailedOperationsCount  int        `json:"failed_operations_count"`
+	ConflictsCount         int        `json:"conflicts_count"`
+	IsUpToDate             bool       `json:"is_up_to_date"`
+	ProgressPercent        float64    `json:"progress_percent"`
+	SyncHealth             string     `json:"sync_health"` // healthy, degraded, unhealthy
+}
+
+// calculateSyncHealth determines the health of sync based on various factors
+func (s *Service) calculateSyncHealth(status *SyncStatus, pending, conflicts int) string {
+	// If there are conflicts, health is degraded
+	if conflicts > 0 {
+		return "degraded"
+	}
+
+	// If there are many failed operations, health is unhealthy
+	if status.FailedOperationsCount > 10 {
+		return "unhealthy"
+	}
+
+	// If last successful sync was long ago, health is degraded
+	if status.LastSuccessfulSyncAt != nil {
+		if time.Since(*status.LastSuccessfulSyncAt) > 24*time.Hour {
+			return "degraded"
+		}
+	}
+
+	// If too many pending operations, health is degraded
+	if pending > 100 {
+		return "degraded"
+	}
+
+	return "healthy"
 }

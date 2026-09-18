@@ -31,6 +31,7 @@ const (
 type Claims struct {
 	UserID    uuid.UUID `json:"sub"` // Standard 'sub' claim for user ID
 	Email     string    `json:"email"`
+	Role      string    `json:"role,omitempty"` // User role for authorization
 	Type      TokenType `json:"type"`
 	SessionID string    `json:"sid,omitempty"` // Session ID for tracking
 	jwt.RegisteredClaims
@@ -155,32 +156,48 @@ func parseRSAPublicKey(pemStr string) (*rsa.PublicKey, error) {
 
 // GenerateAccessToken generates an access token for a user
 func (m *JWTManager) GenerateAccessToken(userID uuid.UUID, email string) (string, error) {
-	return m.generateToken(userID, email, "", AccessToken, m.accessTokenExpiry)
+	return m.generateToken(userID, email, "", "", AccessToken, m.accessTokenExpiry)
+}
+
+// GenerateAccessTokenWithRole generates an access token with role
+func (m *JWTManager) GenerateAccessTokenWithRole(userID uuid.UUID, email, role string) (string, error) {
+	return m.generateToken(userID, email, role, "", AccessToken, m.accessTokenExpiry)
 }
 
 // GenerateAccessTokenWithSession generates an access token with session ID
 func (m *JWTManager) GenerateAccessTokenWithSession(userID uuid.UUID, email, sessionID string) (string, error) {
-	return m.generateToken(userID, email, sessionID, AccessToken, m.accessTokenExpiry)
+	return m.generateToken(userID, email, "", sessionID, AccessToken, m.accessTokenExpiry)
+}
+
+// GenerateAccessTokenFull generates an access token with all optional fields
+func (m *JWTManager) GenerateAccessTokenFull(userID uuid.UUID, email, role, sessionID string) (string, error) {
+	return m.generateToken(userID, email, role, sessionID, AccessToken, m.accessTokenExpiry)
 }
 
 // GenerateRefreshToken generates a refresh token for a user
 func (m *JWTManager) GenerateRefreshToken(userID uuid.UUID, email string) (string, error) {
-	return m.generateToken(userID, email, "", RefreshToken, m.refreshTokenExpiry)
+	return m.generateToken(userID, email, "", "", RefreshToken, m.refreshTokenExpiry)
+}
+
+// GenerateRefreshTokenWithRole generates a refresh token with role
+func (m *JWTManager) GenerateRefreshTokenWithRole(userID uuid.UUID, email, role string) (string, error) {
+	return m.generateToken(userID, email, role, "", RefreshToken, m.refreshTokenExpiry)
 }
 
 // GenerateRefreshTokenWithSession generates a refresh token with session ID
 func (m *JWTManager) GenerateRefreshTokenWithSession(userID uuid.UUID, email, sessionID string) (string, error) {
-	return m.generateToken(userID, email, sessionID, RefreshToken, m.refreshTokenExpiry)
+	return m.generateToken(userID, email, "", sessionID, RefreshToken, m.refreshTokenExpiry)
 }
 
 // generateToken generates a JWT token with proper standard claims
-func (m *JWTManager) generateToken(userID uuid.UUID, email, sessionID string, tokenType TokenType, expiry time.Duration) (string, error) {
+func (m *JWTManager) generateToken(userID uuid.UUID, email, role, sessionID string, tokenType TokenType, expiry time.Duration) (string, error) {
 	now := time.Now()
 	jti := uuid.New().String() // Unique JWT ID for revocation tracking
 
 	claims := Claims{
 		UserID:    userID,
 		Email:     email,
+		Role:      role,
 		Type:      tokenType,
 		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -225,17 +242,32 @@ func (m *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
 	)
 
 	token, err := parser.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Verify signing method matches configured method
+		// Defense in depth: Double-check algorithm even though WithValidMethods is set
+		// This protects against potential library vulnerabilities
+		expectedAlg := string(m.signingMethod)
+
+		// Explicitly reject 'none' algorithm (critical security check)
+		if token.Method.Alg() == "none" {
+			return nil, fmt.Errorf("'none' algorithm is not allowed")
+		}
+
+		// Verify algorithm matches expected (defense in depth)
+		if token.Method.Alg() != expectedAlg {
+			return nil, fmt.Errorf("token algorithm %s does not match expected %s",
+				token.Method.Alg(), expectedAlg)
+		}
+
+		// Verify signing method type matches configured method
 		switch m.signingMethod {
 		case SigningMethodHS256:
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v (expected HS256)", token.Header["alg"])
+				return nil, fmt.Errorf("unexpected signing method type: %T (expected HMAC)", token.Method)
 			}
 			return m.secret, nil
 
 		case SigningMethodRS256:
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v (expected RS256)", token.Header["alg"])
+				return nil, fmt.Errorf("unexpected signing method type: %T (expected RSA)", token.Method)
 			}
 			return m.publicKey, nil
 

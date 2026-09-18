@@ -1,0 +1,501 @@
+# DoneList iOS App - Product Requirements Document
+
+## Project Overview
+DoneList iOS 앱은 Go 백엔드 서버와 연동되는 시간 추적/체크인 애플리케이션입니다.
+
+### Technical Stack
+- UI Framework: SwiftUI Only
+- Minimum iOS: iOS 17+
+- Architecture: Clean Architecture
+- Database: SwiftData
+- Offline Support: Full (오프라인 큐 + Last Write Wins 동기화)
+
+### Target
+- 14주 개발 일정
+- Full Feature 구현 (인증, 체크인, 타임라인, 캘린더, 통계, 검색, 구독, 동기화, 알림, 팀)
+
+---
+
+## Phase 1: Project Foundation (Week 1-2)
+
+### Task: iOS 프로젝트 초기 설정
+Create new Xcode project with SwiftUI App template. Configure for iOS 17+ deployment target. Set up project structure following Clean Architecture pattern.
+
+### Task: SPM 모듈 구조 생성
+Create Swift Package Manager local packages:
+- DLCore: Common utilities, extensions, error types
+- DLDomain: Entities, Use Cases, Repository Protocols
+- DLData: Repository implementations, DataSources, DTOs, Mappers
+- DLNetworking: API Client, Interceptors, Token Manager
+- DLPresentation: ViewModels, Views, Coordinators
+- DLSync: Offline queue, Sync engine
+- DLIAP: StoreKit 2, Subscription management
+- DLNotifications: Push notification handling
+
+### Task: DLCore 모듈 구현
+Implement core utilities:
+- Date extensions (ISO8601 formatting, relative dates)
+- String extensions (validation, trimming)
+- UUID extensions
+- AppError enum with localized descriptions
+- Logger utility using OSLog
+- Constants and configuration
+
+### Task: DLNetworking API Client 구현
+Implement networking layer:
+- APIClient protocol with async/await
+- APIClientImpl with URLSession
+- Endpoint enum for all API routes
+- HTTPMethod enum
+- Request/Response interceptor chain
+- AuthInterceptor for Bearer token
+- LoggingInterceptor for debug
+- RetryInterceptor with exponential backoff
+- APIError enum with comprehensive error cases
+
+### Task: Token Manager 구현
+Implement secure token management:
+- TokenManager protocol
+- TokenManagerImpl using Keychain
+- KeychainService for secure storage
+- Access token caching with expiry check
+- Refresh token rotation handling
+- Automatic token refresh on 401
+
+### Task: SwiftData 스키마 정의
+Define SwiftData models:
+- UserEntity
+- CheckinEntity with tags relationship
+- CategoryEntity
+- TagEntity
+- SyncOperationEntity for offline queue
+- SyncStatusEntity for device sync state
+- CacheMetadataEntity for ETag support
+
+---
+
+## Phase 2: Authentication (Week 3)
+
+### Task: DLDomain 인증 엔티티 정의
+Define authentication domain models:
+- User entity with all fields
+- UserRole enum (user, admin, superadmin)
+- SubscriptionTier enum (free, premium, enterprise)
+- AppMode enum (personal, team)
+- TokenPair struct
+- AuthResult struct
+
+### Task: 인증 Use Cases 구현
+Implement authentication use cases:
+- LoginUseCase
+- RegisterUseCase
+- RefreshTokenUseCase
+- LogoutUseCase
+- GetCurrentUserUseCase
+
+### Task: AuthRepository 구현
+Implement AuthRepository:
+- AuthRemoteDataSource for API calls
+- AuthLocalDataSource for cached user
+- AuthRepositoryImpl combining remote and local
+- DTO to Domain mappers
+
+### Task: 로그인/회원가입 화면 구현
+Create authentication views:
+- LoginView with email/password fields
+- RegisterView with email/password/displayName
+- Form validation with error messages
+- Loading state handling
+- Error display
+
+### Task: AuthViewModel 구현
+Implement AuthViewModel:
+- @Observable class
+- Form state management
+- Validation logic
+- Login/Register async methods
+- Error handling
+
+### Task: 온보딩 플로우 구현
+Create onboarding flow:
+- WelcomeView with app introduction
+- Feature highlights carousel
+- Auth options (Login/Register)
+- Navigation coordination
+
+### Task: 2FA 설정 화면 구현 (선택)
+Implement two-factor authentication:
+- TwoFactorSetupView with QR code display
+- TwoFactorVerifyView for code input
+- BackupCodesView for recovery codes
+- 2FA enable/disable flow
+
+---
+
+## Phase 3: Core Features (Week 4-5)
+
+### Task: DLDomain 체크인 엔티티 정의
+Define checkin domain models:
+- Checkin entity with all fields
+- SyncStatus enum
+- Duration validation (15, 30, 45, 120)
+- Category entity
+- Tag entity
+
+### Task: 체크인 Use Cases 구현
+Implement checkin use cases:
+- CreateCheckinUseCase with offline support
+- GetCheckinsUseCase with pagination
+- GetCheckinByIDUseCase
+- UpdateCheckinUseCase with version check
+- DeleteCheckinUseCase
+
+### Task: CheckinRepository 구현
+Implement CheckinRepository:
+- CheckinRemoteDataSource
+- CheckinLocalDataSource with SwiftData
+- Offline-first logic
+- Optimistic UI updates
+- Sync status management
+
+### Task: Today 탭 화면 구현
+Create Today tab views:
+- TodayView as main container
+- DailyTimelineView with time blocks
+- TimeBlockCell component
+- CheckinRowView component
+- Empty state view
+- Pull to refresh
+
+### Task: QuickCheckin Sheet 구현
+Create quick checkin interface:
+- QuickCheckinSheet as modal
+- ContentTextEditor with character counter
+- DurationPicker (15/30/45/120)
+- CategorySelector grid
+- TagInputField with autocomplete
+- DateTime picker (optional override)
+- Save/Cancel actions
+
+### Task: 카테고리 관리 구현
+Implement category management:
+- CategoryRepository
+- CategoriesManagementView
+- CategoryEditorView
+- ColorPickerView with presets
+- IconPickerView with SF Symbols
+- Category CRUD operations
+
+### Task: 태그 관리 구현
+Implement tag management:
+- TagRepository
+- TagInputField component
+- Tag autocomplete API integration
+- Popular tags display
+- Tag creation flow
+
+---
+
+## Phase 4: Timeline & Calendar (Week 6-7)
+
+### Task: Timeline Use Cases 구현
+Implement timeline use cases:
+- GetDailyTimelineUseCase
+- GetWeeklyTimelineUseCase
+- GetMonthlyTimelineUseCase
+
+### Task: TimelineRepository 구현
+Implement TimelineRepository:
+- TimelineRemoteDataSource
+- In-memory caching
+- ETag support for conditional requests
+- Cache invalidation on checkin changes
+
+### Task: Timeline 탭 화면 구현
+Create Timeline tab views:
+- TimelineView with segment control
+- DailyListView
+- WeeklyGroupedView with day sections
+- MonthlyGroupedView
+- Date navigation (swipe left/right)
+- Search bar integration
+
+### Task: Calendar Use Cases 구현
+Implement calendar use cases:
+- GetMonthlyCalendarUseCase
+- GetHeatmapUseCase
+
+### Task: CalendarRepository 구현
+Implement CalendarRepository:
+- CalendarRemoteDataSource
+- ETag-based caching
+- Month prefetching
+
+### Task: Calendar 탭 화면 구현
+Create Calendar tab views:
+- CalendarView with month navigator
+- MonthGridView with intensity colors
+- CalendarDayCell component
+- IntensityDot component (0-4 scale)
+- DayDetailSheet with checkins list
+
+### Task: Heatmap 뷰 구현
+Create GitHub-style heatmap:
+- HeatmapView with scrollable grid
+- 12-month visualization
+- Color intensity legend
+- Tap to view day details
+
+### Task: 검색 기능 구현
+Implement search functionality:
+- SearchUseCase
+- SearchView with results
+- FilterSheet with options
+- Date range picker
+- Category/Tag multi-select
+- Duration range filter
+- Sort options
+
+---
+
+## Phase 5: Statistics & Settings (Week 8)
+
+### Task: Statistics Use Cases 구현
+Implement statistics use cases:
+- GetWeeklyStatisticsUseCase
+
+### Task: StatisticsRepository 구현
+Implement StatisticsRepository:
+- StatisticsRemoteDataSource
+- Caching with TTL
+
+### Task: Statistics 탭 화면 구현
+Create Statistics tab views:
+- StatisticsView container
+- WeeklyStatsCard component
+- ProductivityLineChart using Swift Charts
+- CategoryPieChart with legend
+- StreakIndicator component
+- Week navigation
+
+### Task: Settings 화면 구현
+Create Settings views:
+- SettingsView with sections
+- ProfileSection
+- PreferencesSection
+- DataSection
+- SupportSection
+
+### Task: 프로필 관리 구현
+Implement profile management:
+- ProfileView
+- EditProfileView
+- AvatarPickerSheet
+- Profile update API integration
+
+### Task: 앱 설정 구현
+Implement app preferences:
+- AppearanceSettingsView (theme)
+- DateTimeSettingsView (format, week start)
+- Data retention settings
+
+---
+
+## Phase 6: Offline Sync (Week 9-10)
+
+### Task: DLSync SyncManager 구현
+Implement sync manager:
+- SyncManager protocol
+- SyncManagerImpl with state machine
+- Sync states (idle, preparing, uploading, downloading, success, failed, conflict)
+- Batch operation processing
+
+### Task: 오프라인 큐 시스템 구현
+Implement offline queue:
+- SyncOperationQueue
+- Idempotency key generation
+- Operation deduplication
+- Queue persistence with SwiftData
+
+### Task: 동기화 엔진 구현
+Implement sync engine:
+- Delta sync logic
+- Full sync for first launch
+- Incremental sync with lastSyncAt
+- Batch POST /sync requests
+
+### Task: Last Write Wins 충돌 해결 구현
+Implement conflict resolution:
+- Timestamp comparison logic
+- Automatic resolution
+- Conflict notification to user
+- Conflict history logging
+
+### Task: 백그라운드 동기화 구현
+Implement background sync:
+- BGAppRefreshTask registration
+- BGProcessingTask for full sync
+- Network reachability monitoring
+- Sync scheduling logic
+
+### Task: SyncStatus 화면 구현
+Create sync status views:
+- SyncStatusView
+- Pending operations count
+- Last sync timestamp
+- Manual sync trigger
+- Conflict list (if any)
+
+---
+
+## Phase 7: Premium & IAP (Week 11)
+
+### Task: DLIAP StoreKit 2 연동
+Implement StoreKit 2 integration:
+- IAPService protocol
+- StoreKitManager with Product loading
+- Purchase flow implementation
+- Transaction listener
+
+### Task: 영수증 검증 구현
+Implement receipt validation:
+- Server-side validation API call
+- POST /payment/verify-receipt
+- Subscription status sync
+
+### Task: SubscriptionManager 구현
+Implement subscription management:
+- SubscriptionManager @Observable
+- isPremium computed property
+- Subscription status caching
+- Expiry handling
+
+### Task: Feature Gating 구현
+Implement feature restrictions:
+- PremiumFeature enum
+- requirePremium() helper
+- FeatureGatedError
+- Upgrade prompt trigger
+
+### Task: 구독 관리 화면 구현
+Create subscription views:
+- SubscriptionStatusView
+- UpgradeView with plan comparison
+- PlanComparisonView
+- Native payment sheet integration
+- Restore purchases button
+
+---
+
+## Phase 8: Notifications (Week 12)
+
+### Task: DLNotifications 푸시 등록 구현
+Implement push registration:
+- PushNotificationService
+- Permission request flow
+- Device token registration
+- POST device token to server
+
+### Task: 알림 핸들링 구현
+Implement notification handling:
+- UNUserNotificationCenterDelegate
+- Foreground presentation
+- Background tap handling
+- Notification payload parsing
+
+### Task: Deep Link 핸들러 구현
+Implement deep linking:
+- URL scheme registration (donelist://)
+- AppRouter for navigation
+- DeepLinkHandler for URL parsing
+- Route to appropriate screens
+
+### Task: 알림 설정 화면 구현
+Create notification settings:
+- NotificationSettingsView
+- Push notification toggle
+- Reminder configuration
+- DND (Do Not Disturb) settings
+
+---
+
+## Phase 9: Teams (Week 13)
+
+### Task: Team 엔티티 및 Use Cases 구현
+Implement team domain:
+- Team entity
+- TeamMember entity
+- TeamMemberRole enum
+- GetTeamsUseCase
+- CreateTeamUseCase
+- TeamMembersUseCase
+
+### Task: TeamRepository 구현
+Implement TeamRepository:
+- TeamRemoteDataSource
+- Team CRUD operations
+- Member management
+
+### Task: 팀 목록/상세 화면 구현
+Create team views:
+- TeamListView
+- TeamDetailView
+- TeamMembersView
+- CreateTeamView
+- InviteMemberView
+
+### Task: 모드 전환 구현
+Implement mode switching:
+- ModeSwitcherView
+- SwitchModeUseCase
+- POST /users/mode API
+- Context-aware data reload
+- UI state update
+
+---
+
+## Phase 10: Polish (Week 14)
+
+### Task: 접근성 구현
+Implement accessibility:
+- VoiceOver labels for all interactive elements
+- Dynamic Type support with @ScaledMetric
+- Color contrast verification
+- Reduce motion support
+- Voice Control labels
+
+### Task: 성능 최적화
+Optimize performance:
+- List virtualization
+- Image caching
+- API response caching
+- Lazy loading
+- Memory profiling
+
+### Task: 에러 처리 개선
+Improve error handling:
+- Comprehensive error states
+- Retry mechanisms
+- User-friendly error messages
+- Error logging/reporting
+
+### Task: Unit 테스트 작성
+Write unit tests:
+- Domain layer tests (entities, use cases)
+- Data layer tests (repositories, mappers)
+- ViewModel tests
+- Mock objects
+
+### Task: UI 테스트 작성
+Write UI tests:
+- Authentication flow tests
+- Checkin creation tests
+- Navigation tests
+- Critical user journey tests
+
+### Task: 최종 QA 및 버그 수정
+Final quality assurance:
+- Full feature testing
+- Edge case handling
+- Performance testing
+- Bug fixes

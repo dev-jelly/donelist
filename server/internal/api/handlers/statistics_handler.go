@@ -25,21 +25,20 @@ func NewStatisticsHandler(statisticsService *statistics.Service, logger *zap.Log
 }
 
 // GetWeeklyStatistics retrieves comprehensive weekly statistics and analysis
-// GET /statistics/weekly?date=2006-01-02&week_start=monday&timezone=America/New_York
-//
-// Query Parameters:
-// - date: Optional. Any date within the desired week (YYYY-MM-DD format). Defaults to current date.
-// - week_start: Optional. First day of week: "monday" or "sunday". Defaults to "monday".
-// - timezone: Optional. IANA timezone (e.g., "America/New_York", "Asia/Seoul"). Defaults to UTC.
-//
-// Response: WeeklyStatistics object with comprehensive analysis including:
-// - Weekly summary (totals, averages, completion rate)
-// - Daily breakdown (7 days with individual stats)
-// - Day-of-week analysis (which days are most productive)
-// - Time distribution (morning/afternoon/evening/night patterns)
-// - Category breakdown (top categories by count and duration)
-// - Week-over-week comparison (vs previous week)
-// - Streak information (current streak, longest streak, milestones)
+// @Summary Get weekly statistics
+// @Description Retrieves comprehensive weekly statistics including productivity metrics, patterns, trends, and comparisons
+// @Tags statistics
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param date query string false "Any date within the desired week (YYYY-MM-DD format). Defaults to current date." example(2024-01-15)
+// @Param week_start query string false "First day of week: 'monday' or 'sunday'. Defaults to 'monday'." default(monday) Enums(monday, sunday)
+// @Param timezone query string false "IANA timezone (e.g., 'America/New_York', 'Asia/Seoul'). Defaults to UTC." default(UTC) example(America/New_York)
+// @Success 200 {object} statistics.WeeklyStatistics "Comprehensive weekly statistics with summary, daily breakdown, patterns, and trends"
+// @Failure 400 {object} map[string]string "Invalid request parameters (invalid date format, week_start, or timezone)"
+// @Failure 401 {object} map[string]string "Unauthorized - missing or invalid authentication token"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /statistics/weekly [get]
 func (h *StatisticsHandler) GetWeeklyStatistics(c *gin.Context) {
 	userID, err := middleware.GetUserID(c)
 	if err != nil {

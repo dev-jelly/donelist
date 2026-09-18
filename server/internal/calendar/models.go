@@ -97,3 +97,23 @@ func CalculateCompletionPercent(totalMinutes int) float64 {
 	}
 	return (float64(totalMinutes) / float64(minutesPerDay)) * 100.0
 }
+
+// HeatmapDay represents a single day in the heatmap view
+type HeatmapDay struct {
+	Date              string  `json:"date"`               // YYYY-MM-DD format
+	CheckinCount      int     `json:"checkin_count"`      // Number of check-ins on this day
+	TotalMinutes      int     `json:"total_minutes"`      // Total duration of all check-ins
+	CompletionPercent float64 `json:"completion_percent"` // Percentage of day covered (0-100)
+	ColorIntensity    int     `json:"color_intensity"`    // Color intensity level (0-4)
+}
+
+// HeatmapData represents heatmap visualization data for a date range
+type HeatmapData struct {
+	StartDate   string        `json:"start_date"`   // YYYY-MM-DD format
+	EndDate     string        `json:"end_date"`     // YYYY-MM-DD format
+	Days        []*HeatmapDay `json:"days"`         // Array of days with activity data
+	TotalDays   int           `json:"total_days"`   // Total number of days in range
+	ActiveDays  int           `json:"active_days"`  // Days with at least one check-in
+	TotalCheckins int         `json:"total_checkins"` // Total check-ins in the range
+	GeneratedAt time.Time     `json:"generated_at"` // Timestamp of generation
+}

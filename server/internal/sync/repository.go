@@ -342,3 +342,216 @@ func (r *Repository) GetConflictedOperations(ctx context.Context, userID uuid.UU
 
 	return items, nil
 }
+
+// --- Server Changes Retrieval ---
+
+// GetCheckinChangesSince retrieves checkin changes since a given time
+func (r *Repository) GetCheckinChangesSince(ctx context.Context, userID uuid.UUID, since time.Time) ([]ServerChange, error) {
+	query := `
+		SELECT id, title, category_id, checkin_time, duration_minutes, notes,
+		       version, created_at, updated_at, deleted_at
+		FROM checkins
+		WHERE user_id = $1 AND updated_at > $2
+		ORDER BY updated_at ASC
+		LIMIT 1000
+	`
+
+	type checkinRow struct {
+		ID              uuid.UUID      `db:"id"`
+		Title           string         `db:"title"`
+		CategoryID      *uuid.UUID     `db:"category_id"`
+		CheckinTime     time.Time      `db:"checkin_time"`
+		DurationMinutes int            `db:"duration_minutes"`
+		Notes           *string        `db:"notes"`
+		Version         int            `db:"version"`
+		CreatedAt       time.Time      `db:"created_at"`
+		UpdatedAt       time.Time      `db:"updated_at"`
+		DeletedAt       sql.NullTime   `db:"deleted_at"`
+	}
+
+	var rows []checkinRow
+	err := r.db.SelectContext(ctx, &rows, query, userID, since)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get checkin changes: %w", err)
+	}
+
+	changes := make([]ServerChange, 0, len(rows))
+	for _, row := range rows {
+		var opType OperationType
+		if row.DeletedAt.Valid {
+			opType = OperationDelete
+		} else if row.CreatedAt.After(since) {
+			opType = OperationCreate
+		} else {
+			opType = OperationUpdate
+		}
+
+		data, _ := json.Marshal(map[string]interface{}{
+			"id":               row.ID,
+			"title":            row.Title,
+			"category_id":      row.CategoryID,
+			"checkin_time":     row.CheckinTime,
+			"duration_minutes": row.DurationMinutes,
+			"notes":            row.Notes,
+			"version":          row.Version,
+		})
+
+		changes = append(changes, ServerChange{
+			OperationType:   opType,
+			ResourceType:    ResourceCheckin,
+			ResourceID:      row.ID,
+			Data:            data,
+			ServerTimestamp: row.UpdatedAt,
+			Version:         &row.Version,
+		})
+	}
+
+	return changes, nil
+}
+
+// GetCategoryChangesSince retrieves category changes since a given time
+func (r *Repository) GetCategoryChangesSince(ctx context.Context, userID uuid.UUID, since time.Time) ([]ServerChange, error) {
+	query := `
+		SELECT id, name, color, icon, display_order, created_at, updated_at
+		FROM categories
+		WHERE user_id = $1 AND updated_at > $2
+		ORDER BY updated_at ASC
+		LIMIT 500
+	`
+
+	type categoryRow struct {
+		ID           uuid.UUID `db:"id"`
+		Name         string    `db:"name"`
+		Color        *string   `db:"color"`
+		Icon         *string   `db:"icon"`
+		DisplayOrder int       `db:"display_order"`
+		CreatedAt    time.Time `db:"created_at"`
+		UpdatedAt    time.Time `db:"updated_at"`
+	}
+
+	var rows []categoryRow
+	err := r.db.SelectContext(ctx, &rows, query, userID, since)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get category changes: %w", err)
+	}
+
+	changes := make([]ServerChange, 0, len(rows))
+	for _, row := range rows {
+		var opType OperationType
+		if row.CreatedAt.After(since) {
+			opType = OperationCreate
+		} else {
+			opType = OperationUpdate
+		}
+
+		data, _ := json.Marshal(map[string]interface{}{
+			"id":            row.ID,
+			"name":          row.Name,
+			"color":         row.Color,
+			"icon":          row.Icon,
+			"display_order": row.DisplayOrder,
+		})
+
+		changes = append(changes, ServerChange{
+			OperationType:   opType,
+			ResourceType:    ResourceCategory,
+			ResourceID:      row.ID,
+			Data:            data,
+			ServerTimestamp: row.UpdatedAt,
+		})
+	}
+
+	return changes, nil
+}
+
+// GetTagChangesSince retrieves tag changes since a given time
+func (r *Repository) GetTagChangesSince(ctx context.Context, userID uuid.UUID, since time.Time) ([]ServerChange, error) {
+	query := `
+		SELECT id, name, color, created_at, updated_at
+		FROM tags
+		WHERE user_id = $1 AND updated_at > $2
+		ORDER BY updated_at ASC
+		LIMIT 500
+	`
+
+	type tagRow struct {
+		ID        uuid.UUID `db:"id"`
+		Name      string    `db:"name"`
+		Color     *string   `db:"color"`
+		CreatedAt time.Time `db:"created_at"`
+		UpdatedAt time.Time `db:"updated_at"`
+	}
+
+	var rows []tagRow
+	err := r.db.SelectContext(ctx, &rows, query, userID, since)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tag changes: %w", err)
+	}
+
+	changes := make([]ServerChange, 0, len(rows))
+	for _, row := range rows {
+		var opType OperationType
+		if row.CreatedAt.After(since) {
+			opType = OperationCreate
+		} else {
+			opType = OperationUpdate
+		}
+
+		data, _ := json.Marshal(map[string]interface{}{
+			"id":    row.ID,
+			"name":  row.Name,
+			"color": row.Color,
+		})
+
+		changes = append(changes, ServerChange{
+			OperationType:   opType,
+			ResourceType:    ResourceTag,
+			ResourceID:      row.ID,
+			Data:            data,
+			ServerTimestamp: row.UpdatedAt,
+		})
+	}
+
+	return changes, nil
+}
+
+// --- Retry with Exponential Backoff ---
+
+// GetItemsForRetry retrieves failed items that are ready for retry based on exponential backoff
+func (r *Repository) GetItemsForRetry(ctx context.Context, maxRetries int) ([]*SyncQueueItem, error) {
+	// Exponential backoff intervals: 1min, 5min, 15min, 30min, 1hr, 2hr, 4hr, 8hr
+	query := `
+		SELECT id, user_id, operation_type, resource_type, resource_id,
+		       idempotency_key, client_timestamp, status, retry_count,
+		       last_retry_at, error_message, operation_data, conflict_data,
+		       created_at, updated_at, completed_at
+		FROM sync_queue
+		WHERE status = 'failed'
+		  AND retry_count < $1
+		  AND (
+		    last_retry_at IS NULL
+		    OR last_retry_at < CURRENT_TIMESTAMP - (
+		      CASE
+		        WHEN retry_count = 0 THEN INTERVAL '1 minute'
+		        WHEN retry_count = 1 THEN INTERVAL '5 minutes'
+		        WHEN retry_count = 2 THEN INTERVAL '15 minutes'
+		        WHEN retry_count = 3 THEN INTERVAL '30 minutes'
+		        WHEN retry_count = 4 THEN INTERVAL '1 hour'
+		        WHEN retry_count = 5 THEN INTERVAL '2 hours'
+		        WHEN retry_count = 6 THEN INTERVAL '4 hours'
+		        ELSE INTERVAL '8 hours'
+		      END
+		    )
+		  )
+		ORDER BY created_at ASC
+		LIMIT 100
+	`
+
+	var items []*SyncQueueItem
+	err := r.db.SelectContext(ctx, &items, query, maxRetries)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get items for retry: %w", err)
+	}
+
+	return items, nil
+}

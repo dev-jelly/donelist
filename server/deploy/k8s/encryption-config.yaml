@@ -1,0 +1,103 @@
+# Kubernetes Encryption at Rest Configuration
+# This file configures encryption for secrets stored in etcd
+#
+# Usage:
+# 1. Save this file on your Kubernetes control plane node(s)
+# 2. Generate a 32-byte encryption key:
+#    head -c 32 /dev/urandom | base64
+# 3. Replace YOUR_BASE64_ENCRYPTION_KEY_HERE with the generated key
+# 4. Update kube-apiserver to use this config:
+#    --encryption-provider-config=/etc/kubernetes/encryption-config.yaml
+# 5. Restart kube-apiserver
+# 6. Encrypt existing secrets:
+#    kubectl get secrets --all-namespaces -o json | kubectl replace -f -
+
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      # Use AES-CBC encryption
+      - aescbc:
+          keys:
+            - name: key1
+              secret: YOUR_BASE64_ENCRYPTION_KEY_HERE  # Replace with actual key
+      # Fallback to identity (no encryption) for reading old secrets during migration
+      - identity: {}
+
+---
+# Instructions for managed Kubernetes services:
+
+# AWS EKS:
+# EKS automatically encrypts secrets using AWS KMS
+# To enable:
+# 1. Create a KMS key
+# 2. Enable encryption on cluster creation or update:
+#    aws eks create-cluster --encryption-config '[{"resources":["secrets"],"provider":{"keyArn":"arn:aws:kms:..."}}]'
+
+# GKE:
+# GKE automatically encrypts etcd data using Google-managed keys
+# To use customer-managed encryption keys (CMEK):
+# 1. Create a Cloud KMS key
+# 2. Enable CMEK on cluster creation:
+#    gcloud container clusters create CLUSTER_NAME --database-encryption-key=projects/KEY_PROJECT_ID/locations/LOCATION/keyRings/RING_NAME/cryptoKeys/KEY_NAME
+
+# AKS:
+# AKS automatically encrypts data at rest using Azure Storage encryption
+# For additional encryption, use Azure Key Vault:
+# 1. Enable the Azure Key Vault Provider for Secrets Store CSI Driver
+# 2. Create Azure Key Vault and keys
+# 3. Configure SecretProviderClass
+
+---
+# Example: Azure Key Vault integration with AKS
+# apiVersion: secrets-store.csi.x-k8s.io/v1
+# kind: SecretProviderClass
+# metadata:
+#   name: donelist-azure-keyvault
+#   namespace: donelist
+# spec:
+#   provider: azure
+#   parameters:
+#     usePodIdentity: "false"
+#     useVMManagedIdentity: "true"
+#     userAssignedIdentityID: "YOUR_IDENTITY_CLIENT_ID"
+#     keyvaultName: "YOUR_KEYVAULT_NAME"
+#     cloudName: "AzurePublicCloud"
+#     objects: |
+#       array:
+#         - |
+#           objectName: db-password
+#           objectType: secret
+#           objectVersion: ""
+#         - |
+#           objectName: redis-password
+#           objectType: secret
+#           objectVersion: ""
+#         - |
+#           objectName: jwt-secret
+#           objectType: secret
+#           objectVersion: ""
+#     tenantId: "YOUR_TENANT_ID"
+#   secretObjects:
+#   - secretName: donelist-secret
+#     type: Opaque
+#     data:
+#     - objectName: db-password
+#       key: DB_PASSWORD
+#     - objectName: redis-password
+#       key: REDIS_PASSWORD
+#     - objectName: jwt-secret
+#       key: JWT_SECRET
+
+---
+# Security best practices for secrets:
+# 1. Enable encryption at rest (this file)
+# 2. Use RBAC to limit secret access
+# 3. Enable audit logging for secret access
+# 4. Rotate secrets regularly
+# 5. Use sealed-secrets or external secret managers
+# 6. Never commit plain secrets to git
+# 7. Use different secrets per environment
+# 8. Monitor secret access patterns

@@ -53,6 +53,7 @@ import (
 	"github.com/dev-jelly/donelist/internal/timeline"
 	"github.com/dev-jelly/donelist/internal/user"
 	"github.com/dev-jelly/donelist/internal/websocket"
+	"github.com/dev-jelly/donelist/pkg/cache"
 	"github.com/dev-jelly/donelist/pkg/database"
 	"github.com/dev-jelly/donelist/pkg/logger"
 	_ "github.com/dev-jelly/donelist/docs"
@@ -88,10 +89,10 @@ func main() {
 		Password:        cfg.Database.Password,
 		Database:        cfg.Database.Name,
 		SSLMode:         cfg.Database.SSLMode,
-		MaxOpenConns:    25,
-		MaxIdleConns:    5,
-		ConnMaxLifetime: 5 * time.Minute,
-		ConnMaxIdleTime: 1 * time.Minute,
+		MaxOpenConns:    cfg.Database.MaxOpenConns,
+		MaxIdleConns:    cfg.Database.MaxIdleConns,
+		ConnMaxLifetime: cfg.Database.ConnMaxLifetime,
+		ConnMaxIdleTime: cfg.Database.ConnMaxIdleTime,
 	}
 
 	db, err := database.NewPostgres(pgConfig, log)
@@ -99,6 +100,24 @@ func main() {
 		log.Fatal("Failed to connect to PostgreSQL", zap.Error(err))
 	}
 	defer database.Close(db, log)
+
+	// Initialize performance monitoring
+	perfMonitor := database.NewPerformanceMonitor(db, database.PerformanceConfig{
+		SlowQueryThreshold: 100 * time.Millisecond,
+		Enabled:            cfg.IsProduction(), // Only enable in production by default
+	}, log)
+	log.Info("Performance monitoring initialized", zap.Bool("enabled", perfMonitor.IsEnabled()))
+
+	// Log pool stats periodically in production
+	if cfg.IsProduction() {
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				perfMonitor.LogPoolStats()
+			}
+		}()
+	}
 
 	// Initialize Redis connection
 	redisConfig := database.RedisConfig{
@@ -113,6 +132,13 @@ func main() {
 		log.Fatal("Failed to connect to Redis", zap.Error(err))
 	}
 	defer database.CloseRedis(redisClient, log)
+
+	// Initialize cache layer
+	cacheLayer := cache.NewCache(redisClient, cache.Config{
+		Prefix:     "donelist:",
+		DefaultTTL: 5 * time.Minute,
+	}, log)
+	log.Info("Cache layer initialized")
 
 	// Initialize JWT manager
 	jwtManager, err := auth.NewJWTManager(auth.JWTConfig{
@@ -145,7 +171,7 @@ func main() {
 			return runtime.NumGoroutine()
 		},
 	))
-	log.Info("Health checks registered")
+	log.Info("Health checks registered (initial)")
 
 	// Initialize WebSocket hub
 	hub := websocket.NewHub(log)
@@ -165,19 +191,60 @@ func main() {
 	teamRepo := team.NewRepository(db, log)
 	profileRepo := profile.NewRepository(db)
 
+	// Initialize timeline cache service
+	timelineCache := timeline.NewCacheService(redisClient, log)
+	log.Info("Timeline cache service initialized")
+
 	// Initialize services
 	authService := auth.NewService(userRepo, refreshTokenRepo, jwtManager, log)
 	userService := user.NewService(userRepo, log)
 	checkinService := checkin.NewService(checkinRepo, categoryRepo, tagRepo, userRepo, hub, log)
-	timelineService := timeline.NewService(checkinRepo, categoryRepo, log)
+	timelineService := timeline.NewService(checkinRepo, categoryRepo, timelineCache, log)
+
+	// Temporarily set timeline-only cache invalidator (will be replaced with composite later)
+	checkinService.SetCacheInvalidator(timelineService)
+	log.Info("Timeline cache invalidation temporarily set for checkin service")
+
+	// Initialize search indexer
+	searchIndexerConfig := search.DefaultIndexerConfig()
+	searchIndexer := search.NewIndexer(searchRepo, hub, searchIndexerConfig, log)
+
+	// Start search indexer
+	indexerCtx := context.Background()
+	if err := searchIndexer.Start(indexerCtx); err != nil {
+		log.Fatal("Failed to start search indexer", zap.Error(err))
+	}
+	log.Info("Search indexer started successfully")
+
+	// Wire up search event handler - checkin service triggers search indexing
+	searchEventHandler := search.NewEventHandler(searchIndexer, log)
+	checkinService.SetSearchEventHandler(searchEventHandler)
+	log.Info("Search indexing wired up with checkin service")
+
+	// Register search indexer health checker
+	healthService.RegisterChecker(search.NewIndexerHealthChecker(searchIndexer))
+	log.Info("Search indexer health checker registered")
+
 	categoryService := category.NewService(categoryRepo, log)
 	tagService := tag.NewService(tagRepo, log)
 	calendarService := calendar.NewService(calendarRepo, log)
 	statisticsService := statistics.NewService(statisticsRepo, log)
+
+	// Initialize statistics cache service
+	statisticsCache := statistics.NewCacheService(redisClient, log)
+	statisticsService.SetCache(statisticsCache)
+	log.Info("Statistics cache service initialized")
+
 	// TODO: Fix sync service interface compatibility
 	// conflictResolver := sync.NewConflictResolver(checkinRepo)
 	syncService := sync.NewService(syncRepo, nil, nil, log)
+
+	// Initialize search service with caching
 	searchService := search.NewService(searchRepo, userRepo, log)
+	searchCache := search.NewCacheService(redisClient, log)
+	searchService.SetCache(searchCache)
+	log.Info("Search cache service initialized")
+
 	apiKeyService := apikey.NewService(apiKeyRepo, log)
 	modeService := mode.NewService(log)
 	teamService := team.NewService(teamRepo, log)
@@ -189,10 +256,21 @@ func main() {
 	checkinHandler := handlers.NewCheckinHandler(checkinService, log)
 	timelineHandler := handlers.NewTimelineHandler(timelineService, log)
 	categoryHandler := handlers.NewCategoryHandler(categoryService, log)
-	categoryMergeHandler := handlers.NewCategoryMergeHandler(db, categoryRepo, log)
+	_ = handlers.NewCategoryMergeHandler(db, categoryRepo, log) // TODO: Add to routes
 	tagHandler := handlers.NewTagHandler(tagService, log)
 	wsHandler := handlers.NewWebSocketHandler(hub, log)
 	calendarHandler := handlers.NewCalendarHandler(calendarService, log)
+	calendarHandler.SetCache(cacheLayer) // Enable V2 functionality with caching
+
+	// Now setup composite cache invalidation with both timeline and calendar
+	compositeCacheInvalidator := checkin.NewCompositeCacheInvalidator(
+		timelineService,  // Timeline cache invalidator
+		calendarHandler,  // Calendar cache invalidator (now with cache set)
+		log,
+	)
+	checkinService.SetCacheInvalidator(compositeCacheInvalidator)
+	log.Info("Composite cache invalidation updated for checkin service (timeline + calendar)")
+
 	statisticsHandler := handlers.NewStatisticsHandler(statisticsService, log)
 	syncHandler := handlers.NewSyncHandler(syncService, log)
 	searchHandler := handlers.NewSearchHandler(searchService, log)
@@ -200,6 +278,7 @@ func main() {
 	modeHandler := handlers.NewModeHandler(modeService, teamService, userRepo, log)
 	teamHandler := handlers.NewTeamHandler(teamService, log)
 	profileHandler := handlers.NewProfileHandler(profileService, log)
+	healthHandler := handlers.NewHealthHandler(healthService, log)
 
 	// Set Gin mode
 	if cfg.IsProduction() {
@@ -231,97 +310,22 @@ func main() {
 	// Prometheus metrics endpoint
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
-	// Simple health check endpoint (for load balancers)
-	healthHandler := func(c *gin.Context) {
-		status, _ := healthService.CheckHealthSimple()
-		httpStatus := http.StatusOK
-		if status != health.StatusHealthy {
-			httpStatus = http.StatusServiceUnavailable
-		}
-
-		buildInfo := health.GetBuildInfo()
-		c.JSON(httpStatus, gin.H{
-			"status":     status,
-			"time":       time.Now().Format(time.RFC3339),
-			"version":    buildInfo.Version,
-			"git_commit": buildInfo.GitCommit,
-		})
-	}
-	router.GET("/health", healthHandler)
-	router.GET("/healthz", healthHandler) // Kubernetes-style endpoint
-
-	// Detailed health check endpoint with full build info
-	detailHandler := func(c *gin.Context) {
-		report := healthService.CheckHealthWithBuildInfo()
-		httpStatus := http.StatusOK
-		if report.Status != health.StatusHealthy {
-			httpStatus = http.StatusServiceUnavailable
-		}
-
-		c.JSON(httpStatus, report)
-	}
-	router.GET("/health/detail", detailHandler)
-	router.GET("/healthz/detail", detailHandler) // Kubernetes-style endpoint
+	// Health check endpoints
+	router.GET("/health", healthHandler.HealthCheck)
+	router.GET("/healthz", healthHandler.HealthCheck) // Kubernetes-style endpoint
+	router.GET("/health/detail", healthHandler.DetailedHealthCheck)
+	router.GET("/healthz/detail", healthHandler.DetailedHealthCheck) // Kubernetes-style endpoint
 
 	// Readiness check endpoint (for Kubernetes)
-	readyHandler := func(c *gin.Context) {
-		report := healthService.CheckHealth()
-		buildInfo := health.GetBuildInfo()
-
-		// Check if all critical components are healthy
-		dbHealth, dbOk := report.Components["postgresql"]
-		redisHealth, redisOk := report.Components["redis"]
-
-		response := gin.H{
-			"version":    buildInfo.Version,
-			"git_commit": buildInfo.GitCommit,
-			"uptime":     healthService.GetUptime().Seconds(),
-		}
-
-		if !dbOk || dbHealth.Status != health.StatusHealthy {
-			response["status"] = "not ready"
-			response["error"] = "database not available"
-			if dbHealth.Error != "" {
-				response["details"] = dbHealth.Error
-			}
-			c.JSON(http.StatusServiceUnavailable, response)
-			return
-		}
-
-		if !redisOk || redisHealth.Status != health.StatusHealthy {
-			response["status"] = "not ready"
-			response["error"] = "redis not available"
-			if redisHealth.Error != "" {
-				response["details"] = redisHealth.Error
-			}
-			c.JSON(http.StatusServiceUnavailable, response)
-			return
-		}
-
-		response["status"] = "ready"
-		response["database"] = "connected"
-		response["redis"] = "connected"
-		c.JSON(http.StatusOK, response)
-	}
-	router.GET("/ready", readyHandler)
-	router.GET("/readyz", readyHandler) // Kubernetes-style endpoint
+	router.GET("/ready", healthHandler.ReadinessCheck)
+	router.GET("/readyz", healthHandler.ReadinessCheck) // Kubernetes-style endpoint
 
 	// Liveness check endpoint (for Kubernetes)
-	liveHandler := func(c *gin.Context) {
-		buildInfo := health.GetBuildInfo()
-		c.JSON(http.StatusOK, gin.H{
-			"status":     "alive",
-			"time":       time.Now().Format(time.RFC3339),
-			"version":    buildInfo.Version,
-			"git_commit": buildInfo.GitCommit,
-			"uptime":     healthService.GetUptime().Seconds(),
-		})
-	}
-	router.GET("/live", liveHandler)
-	router.GET("/livez", liveHandler) // Kubernetes-style endpoint
+	router.GET("/live", healthHandler.LivenessCheck)
+	router.GET("/livez", healthHandler.LivenessCheck) // Kubernetes-style endpoint
 
 	// Setup API routes
-	routes.SetupRoutes(router, authHandler, userHandler, checkinHandler, timelineHandler, categoryHandler, categoryMergeHandler, tagHandler, wsHandler, calendarHandler, statisticsHandler, syncHandler, searchHandler, apiKeyHandler, modeHandler, teamHandler, profileHandler, modeService, apiKeyService, jwtManager, log)
+	routes.SetupRoutes(router, authHandler, userHandler, checkinHandler, timelineHandler, categoryHandler, tagHandler, wsHandler, calendarHandler, statisticsHandler, syncHandler, searchHandler, apiKeyHandler, modeHandler, teamHandler, profileHandler, modeService, apiKeyService, jwtManager, log)
 
 	// Create HTTP server
 	srv := &http.Server{
@@ -348,9 +352,17 @@ func main() {
 	log.Info("Shutting down server...")
 
 	// Graceful shutdown with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Stop search indexer first to ensure all pending operations are processed
+	if err := searchIndexer.Stop(ctx); err != nil {
+		log.Warn("Search indexer shutdown warning", zap.Error(err))
+	} else {
+		log.Info("Search indexer stopped gracefully")
+	}
+
+	// Then shutdown the HTTP server
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatal("Server forced to shutdown", zap.Error(err))
 	}

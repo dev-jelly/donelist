@@ -1,0 +1,70 @@
+# Gremlins Mutation Testing Configuration
+# This configuration defines how mutation testing is performed on critical paths
+
+# Test execution configuration
+test-cpu: 4
+timeout: 30m
+tags: []
+
+# Mutation types to apply
+mutators:
+  - CONDITIONALS_BOUNDARY      # < becomes <=, > becomes >=
+  - CONDITIONALS_NEGATION      # == becomes !=, < becomes >=
+  - INCREMENT_DECREMENT        # i++ becomes i--
+  - INVERT_NEGATIVES          # -x becomes x
+  - INVERT_BITWISE            # ^ becomes &, | becomes &
+  - INVERT_LOGICAL            # && becomes ||, || becomes &&
+  - INVERT_LOOP_CONTROL       # break becomes continue
+  - REMOVE_SELF_ASSIGNMENT    # x = x is removed
+  - ARITHMETIC_BASE           # + becomes -, * becomes /
+
+# Files/packages to include in mutation testing
+# Focus on critical business logic paths
+coverage:
+  # Authentication and security
+  - "./internal/auth/*.go"
+  - "./internal/security/validation.go"
+
+  # Health checks (proven to have good tests)
+  - "./internal/health/*.go"
+
+  # Payment processing
+  - "./internal/payment/*.go"
+
+  # User management
+  - "./internal/user/*.go"
+
+  # Data validation
+  - "./internal/middleware/validation.go"
+
+# Exclude test files, mocks, and generated code
+exclude:
+  - "**/*_test.go"
+  - "**/mock_*.go"
+  - "**/mocks/*.go"
+  - "**/*.pb.go"
+  - "**/wire_gen.go"
+
+# Mutation testing thresholds
+thresholds:
+  # Target 90% mutation kill rate for critical paths
+  efficacy: 90
+
+  # Minimum 80% mutation coverage
+  mutant-coverage: 80
+
+# Output configuration
+output: "mutation-report.json"
+log-level: "info"
+
+# Enable diff mode to only test changed files
+diff: false
+
+# Enable test caching for faster runs
+test-caching: true
+
+# Integration settings
+integrations:
+  # Generate HTML report for visualization
+  html-report: true
+  html-output: "mutation-report.html"

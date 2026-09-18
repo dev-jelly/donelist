@@ -14,16 +14,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// ExportFormat represents the format of export
-type ExportFormat string
-
-const (
-	FormatCSV  ExportFormat = "csv"
-	FormatJSON ExportFormat = "json"
-	FormatPDF  ExportFormat = "pdf"
-	FormatExcel ExportFormat = "xlsx"
-)
-
 // ExportType represents what data to export
 type ExportType string
 
@@ -34,8 +24,8 @@ const (
 	ExportTypeFull      ExportType = "full"
 )
 
-// ExportRequest represents a request to export data
-type ExportRequest struct {
+// ServiceExportRequest represents a request to export data (internal service request)
+type ServiceExportRequest struct {
 	UserID    uuid.UUID
 	Type      ExportType
 	Format    ExportFormat
@@ -83,7 +73,7 @@ func NewService(db *gorm.DB, logger *zap.Logger) *Service {
 }
 
 // Export exports user data in the requested format
-func (s *Service) Export(ctx context.Context, req *ExportRequest) (*ExportResult, error) {
+func (s *Service) Export(ctx context.Context, req *ServiceExportRequest) (*ExportResult, error) {
 	// Validate request
 	if err := s.validateRequest(req); err != nil {
 		return nil, err
@@ -124,7 +114,7 @@ func (s *Service) Export(ctx context.Context, req *ExportRequest) (*ExportResult
 }
 
 // validateRequest validates an export request
-func (s *Service) validateRequest(req *ExportRequest) error {
+func (s *Service) validateRequest(req *ServiceExportRequest) error {
 	if req.UserID == uuid.Nil {
 		return fmt.Errorf("user ID is required")
 	}
@@ -153,7 +143,7 @@ func (s *Service) validateRequest(req *ExportRequest) error {
 }
 
 // getData retrieves data based on export type
-func (s *Service) getData(ctx context.Context, req *ExportRequest) (interface{}, int, error) {
+func (s *Service) getData(ctx context.Context, req *ServiceExportRequest) (interface{}, int, error) {
 	switch req.Type {
 	case ExportTypeCheckins:
 		return s.getCheckinsData(ctx, req)
@@ -169,7 +159,7 @@ func (s *Service) getData(ctx context.Context, req *ExportRequest) (interface{},
 }
 
 // getCheckinsData retrieves checkins data
-func (s *Service) getCheckinsData(ctx context.Context, req *ExportRequest) (interface{}, int, error) {
+func (s *Service) getCheckinsData(ctx context.Context, req *ServiceExportRequest) (interface{}, int, error) {
 	// This is a simplified version - in production, you'd query the actual checkins table
 	type CheckinExport struct {
 		ID         uuid.UUID  `json:"id"`
@@ -212,7 +202,7 @@ func (s *Service) getCheckinsData(ctx context.Context, req *ExportRequest) (inte
 }
 
 // getCategoriesData retrieves categories data
-func (s *Service) getCategoriesData(ctx context.Context, req *ExportRequest) (interface{}, int, error) {
+func (s *Service) getCategoriesData(ctx context.Context, req *ServiceExportRequest) (interface{}, int, error) {
 	type CategoryExport struct {
 		ID        uuid.UUID  `json:"id"`
 		UserID    uuid.UUID  `json:"user_id"`
@@ -242,7 +232,7 @@ func (s *Service) getCategoriesData(ctx context.Context, req *ExportRequest) (in
 }
 
 // getAnalyticsData retrieves analytics data
-func (s *Service) getAnalyticsData(ctx context.Context, req *ExportRequest) (interface{}, int, error) {
+func (s *Service) getAnalyticsData(ctx context.Context, req *ServiceExportRequest) (interface{}, int, error) {
 	type AnalyticsExport struct {
 		Date             string `json:"date"`
 		TotalCheckins    int    `json:"total_checkins"`
@@ -267,7 +257,7 @@ func (s *Service) getAnalyticsData(ctx context.Context, req *ExportRequest) (int
 }
 
 // getFullData retrieves all user data
-func (s *Service) getFullData(ctx context.Context, req *ExportRequest) (interface{}, int, error) {
+func (s *Service) getFullData(ctx context.Context, req *ServiceExportRequest) (interface{}, int, error) {
 	type FullExport struct {
 		Checkins   interface{} `json:"checkins"`
 		Categories interface{} `json:"categories"`
@@ -419,7 +409,7 @@ func (s *Service) formatExcel(data interface{}) ([]byte, error) {
 }
 
 // generateFileName generates a filename for the export
-func (s *Service) generateFileName(req *ExportRequest) string {
+func (s *Service) generateFileName(req *ServiceExportRequest) string {
 	timestamp := time.Now().Format("20060102-150405")
 	return fmt.Sprintf("export-%s-%s-%s.%s",
 		req.Type,

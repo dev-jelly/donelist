@@ -59,11 +59,13 @@ func AuthMiddleware(jwtManager *auth.JWTManager, logger *zap.Logger) gin.Handler
 		// Set user information in context
 		c.Set("user_id", claims.UserID)
 		c.Set("user_email", claims.Email)
+		c.Set("user_role", claims.Role) // Store role for authorization
 		c.Set("jti", claims.ID) // Store JTI for potential blacklist operations
 
 		logger.Debug("User authenticated",
 			zap.String("user_id", claims.UserID.String()),
 			zap.String("email", claims.Email),
+			zap.String("role", claims.Role),
 			zap.String("jti", claims.ID),
 			zap.String("path", c.Request.URL.Path),
 		)
@@ -150,12 +152,14 @@ func AuthMiddlewareWithBlacklist(jwtManager *auth.JWTManager, blacklist *auth.To
 		// Set user information in context
 		c.Set("user_id", claims.UserID)
 		c.Set("user_email", claims.Email)
+		c.Set("user_role", claims.Role) // Store role for authorization
 		c.Set("jti", claims.ID) // Store JTI for potential blacklist operations
 		c.Set("session_id", claims.SessionID) // Store session ID if present
 
 		logger.Debug("User authenticated",
 			zap.String("user_id", claims.UserID.String()),
 			zap.String("email", claims.Email),
+			zap.String("role", claims.Role),
 			zap.String("jti", claims.ID),
 			zap.String("path", c.Request.URL.Path),
 		)
@@ -235,9 +239,11 @@ func OptionalAuthMiddleware(jwtManager *auth.JWTManager, logger *zap.Logger) gin
 
 		c.Set("user_id", claims.UserID)
 		c.Set("user_email", claims.Email)
+		c.Set("user_role", claims.Role)
 
 		logger.Debug("Optional auth: user authenticated",
 			zap.String("user_id", claims.UserID.String()),
+			zap.String("role", claims.Role),
 		)
 
 		c.Next()

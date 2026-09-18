@@ -26,6 +26,27 @@ defer testDB.TearDown(t)
 - `ExecSQL(t *testing.T, query string, args ...interface{})`: Executes SQL statement
 - `MustExec(query string, args ...interface{})`: Executes SQL, panics on error
 
+### TestRedis
+Manages Redis test instance using miniredis (in-memory Redis compatible server).
+
+```go
+testRedis := testutil.SetupTestRedis(t)
+defer testRedis.Close()
+```
+
+**Features:**
+- In-memory Redis server (no Docker required)
+- Full Redis command support
+- Time manipulation for TTL testing
+- Fast and lightweight
+
+**Methods:**
+- `SetupTestRedis(t *testing.T) *TestRedis`: Creates and initializes test Redis
+- `Close()`: Closes client and server
+- `Flush(t *testing.T)`: Clears all data
+- `FastForward(t *testing.T, d time.Duration)`: Advances time for TTL testing
+- `SetTime(t *testing.T, timestamp time.Time)`: Sets current time in Redis
+
 ### Fixtures
 Helper functions to create test data without circular dependencies.
 
@@ -35,6 +56,51 @@ Helper functions to create test data without circular dependencies.
 - Explicit where it matters (email, userID relationships)
 
 ## Usage Examples
+
+### Redis Test with TTL
+```go
+func TestCacheWithTTL(t *testing.T) {
+    redis := testutil.SetupTestRedis(t)
+    defer redis.Close()
+
+    ctx := context.Background()
+
+    // Set cache with 5 minute TTL
+    redis.Client.Set(ctx, "session:123", "user-data", 5*time.Minute)
+
+    // Fast forward time to test expiration
+    redis.FastForward(t, 6*time.Minute)
+
+    // Key should be expired
+    _, err := redis.Client.Get(ctx, "session:123").Result()
+    assert.Error(t, err)
+}
+```
+
+### Combined Database and Redis Test
+```go
+func TestServiceWithCache(t *testing.T) {
+    testDB := testutil.SetupTestDB(t)
+    defer testDB.TearDown(t)
+
+    testRedis := testutil.SetupTestRedis(t)
+    defer testRedis.Close()
+
+    fixtures := testutil.NewFixtures(testDB)
+    userID := fixtures.CreateTestUser(t, "test@example.com", "password", "testuser")
+
+    // Test service with both DB and Redis
+    service := NewService(testDB.DB, testRedis.Client)
+    result, err := service.GetUserWithCache(context.Background(), userID)
+    require.NoError(t, err)
+    assert.NotNil(t, result)
+
+    // Verify cache was set
+    cached, err := testRedis.Client.Get(context.Background(), fmt.Sprintf("user:%s", userID)).Result()
+    assert.NoError(t, err)
+    assert.NotEmpty(t, cached)
+}
+```
 
 ### Basic User Test
 ```go

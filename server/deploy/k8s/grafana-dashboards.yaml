@@ -1,0 +1,500 @@
+# Grafana Dashboards for Donelist API
+# Comprehensive monitoring dashboards for API, Database, and System metrics
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: donelist-grafana-dashboard-api
+  namespace: donelist
+  labels:
+    grafana_dashboard: "1"
+    app: donelist
+data:
+  donelist-api-overview.json: |
+    {
+      "dashboard": {
+        "title": "Donelist API - Overview",
+        "tags": ["donelist", "api", "overview"],
+        "timezone": "browser",
+        "editable": true,
+        "refresh": "30s",
+        "time": {
+          "from": "now-6h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate (req/s)",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(http_requests_total{job=\"donelist-api-service\"}[5m])) by (method, status)",
+                "legendFormat": "{{method}} - {{status}}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Response Time - p50, p95, p99",
+            "type": "graph",
+            "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le))",
+                "legendFormat": "p50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le))",
+                "legendFormat": "p95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le))",
+                "legendFormat": "p99"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Error Rate (%)",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "(sum(rate(http_requests_total{job=\"donelist-api-service\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"donelist-api-service\"}[5m]))) * 100",
+                "legendFormat": "5xx Error Rate"
+              },
+              {
+                "expr": "(sum(rate(http_requests_total{job=\"donelist-api-service\",status=~\"4..\"}[5m])) / sum(rate(http_requests_total{job=\"donelist-api-service\"}[5m]))) * 100",
+                "legendFormat": "4xx Error Rate"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Active Connections",
+            "type": "stat",
+            "gridPos": {"x": 12, "y": 8, "w": 6, "h": 4},
+            "targets": [
+              {
+                "expr": "sum(http_requests_in_flight{job=\"donelist-api-service\"})",
+                "legendFormat": "In-Flight Requests"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "WebSocket Connections",
+            "type": "stat",
+            "gridPos": {"x": 18, "y": 8, "w": 6, "h": 4},
+            "targets": [
+              {
+                "expr": "sum(websocket_connections{job=\"donelist-api-service\"})",
+                "legendFormat": "WebSocket Connections"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Request Size Distribution",
+            "type": "heatmap",
+            "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(http_request_size_bytes_bucket{job=\"donelist-api-service\"}[5m])) by (le)",
+                "format": "heatmap"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "title": "Response Size Distribution",
+            "type": "heatmap",
+            "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(http_response_size_bytes_bucket{job=\"donelist-api-service\"}[5m])) by (le)",
+                "format": "heatmap"
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "title": "Top Endpoints by Request Count",
+            "type": "table",
+            "gridPos": {"x": 0, "y": 24, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "topk(10, sum(rate(http_requests_total{job=\"donelist-api-service\"}[5m])) by (path))",
+                "format": "table",
+                "instant": true
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "title": "Slowest Endpoints (p95)",
+            "type": "table",
+            "gridPos": {"x": 12, "y": 24, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "topk(10, histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le, path)))",
+                "format": "table",
+                "instant": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: donelist-grafana-dashboard-database
+  namespace: donelist
+  labels:
+    grafana_dashboard: "1"
+    app: donelist
+data:
+  donelist-database.json: |
+    {
+      "dashboard": {
+        "title": "Donelist API - Database Performance",
+        "tags": ["donelist", "database", "postgresql"],
+        "timezone": "browser",
+        "editable": true,
+        "refresh": "30s",
+        "time": {
+          "from": "now-6h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Database Connection Pool",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "db_connections_total{job=\"donelist-api-service\"}",
+                "legendFormat": "Active Connections"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "DB Query Duration - p50, p95, p99",
+            "type": "graph",
+            "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.50, sum(rate(db_operation_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le, operation))",
+                "legendFormat": "{{operation}} - p50"
+              },
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(db_operation_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le, operation))",
+                "legendFormat": "{{operation}} - p95"
+              },
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(db_operation_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le, operation))",
+                "legendFormat": "{{operation}} - p99"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "DB Error Rate by Operation",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(db_operation_errors_total{job=\"donelist-api-service\"}[5m])) by (operation, table)",
+                "legendFormat": "{{operation}} - {{table}}"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Cache Hit Rate",
+            "type": "stat",
+            "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "(sum(rate(cache_hits_total{job=\"donelist-api-service\"}[5m])) / (sum(rate(cache_hits_total{job=\"donelist-api-service\"}[5m])) + sum(rate(cache_misses_total{job=\"donelist-api-service\"}[5m])))) * 100",
+                "legendFormat": "Cache Hit Rate %"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Cache Operation Duration",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(cache_operation_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le, operation))",
+                "legendFormat": "{{operation}} - p95"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Slowest Queries by Table",
+            "type": "table",
+            "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "topk(10, histogram_quantile(0.95, sum(rate(db_operation_duration_seconds_bucket{job=\"donelist-api-service\"}[5m])) by (le, table, operation)))",
+                "format": "table",
+                "instant": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: donelist-grafana-dashboard-business
+  namespace: donelist
+  labels:
+    grafana_dashboard: "1"
+    app: donelist
+data:
+  donelist-business-metrics.json: |
+    {
+      "dashboard": {
+        "title": "Donelist API - Business Metrics",
+        "tags": ["donelist", "business", "kpi"],
+        "timezone": "browser",
+        "editable": true,
+        "refresh": "1m",
+        "time": {
+          "from": "now-24h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Daily Active Users",
+            "type": "stat",
+            "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
+            "targets": [
+              {
+                "expr": "donelist_users_active_daily",
+                "legendFormat": "DAU"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Weekly Active Users",
+            "type": "stat",
+            "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+            "targets": [
+              {
+                "expr": "donelist_users_active_weekly",
+                "legendFormat": "WAU"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Monthly Active Users",
+            "type": "stat",
+            "gridPos": {"x": 16, "y": 0, "w": 8, "h": 4},
+            "targets": [
+              {
+                "expr": "donelist_users_active_monthly",
+                "legendFormat": "MAU"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Check-in Creation Rate",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(donelist_checkin_creations_total[5m])) by (category_type)",
+                "legendFormat": "{{category_type}}"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "title": "User Signups by Method",
+            "type": "graph",
+            "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(donelist_user_signups_total[1h])) by (method)",
+                "legendFormat": "{{method}}"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "title": "Timeline Views (with Cache Hit Rate)",
+            "type": "graph",
+            "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(donelist_timeline_views_total[5m])) by (view_type, cache_hit)",
+                "legendFormat": "{{view_type}} - cache_hit={{cache_hit}}"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "title": "Search Queries by Type",
+            "type": "graph",
+            "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(donelist_search_queries_total[5m])) by (query_type)",
+                "legendFormat": "{{query_type}}"
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "title": "Webhook Delivery Success Rate",
+            "type": "gauge",
+            "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "(sum(rate(donelist_webhook_deliveries_total{status=\"success\"}[5m])) / sum(rate(donelist_webhook_deliveries_total[5m]))) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "title": "Sync Conflict Rate",
+            "type": "graph",
+            "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+            "targets": [
+              {
+                "expr": "sum(rate(donelist_sync_conflicts_total[5m])) by (conflict_type)",
+                "legendFormat": "{{conflict_type}}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: donelist-grafana-dashboard-slo
+  namespace: donelist
+  labels:
+    grafana_dashboard: "1"
+    app: donelist
+data:
+  donelist-slo.json: |
+    {
+      "dashboard": {
+        "title": "Donelist API - SLO Dashboard",
+        "tags": ["donelist", "slo", "sli"],
+        "timezone": "browser",
+        "editable": true,
+        "refresh": "1m",
+        "time": {
+          "from": "now-7d",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "API Availability (SLO: 99.9%)",
+            "type": "stat",
+            "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
+            "targets": [
+              {
+                "expr": "(1 - (sum(rate(http_requests_total{job=\"donelist-api-service\",status=~\"5..\"}[7d])) / sum(rate(http_requests_total{job=\"donelist-api-service\"}[7d])))) * 100",
+                "legendFormat": "Availability %"
+              }
+            ],
+            "thresholds": [
+              {"value": 0, "color": "red"},
+              {"value": 99.5, "color": "yellow"},
+              {"value": 99.9, "color": "green"}
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Request Success Rate (SLO: 99.5%)",
+            "type": "stat",
+            "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
+            "targets": [
+              {
+                "expr": "(sum(rate(http_requests_total{job=\"donelist-api-service\",status!~\"5..\"}[7d])) / sum(rate(http_requests_total{job=\"donelist-api-service\"}[7d]))) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ],
+            "thresholds": [
+              {"value": 0, "color": "red"},
+              {"value": 99.0, "color": "yellow"},
+              {"value": 99.5, "color": "green"}
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Response Time p95 (SLO: < 500ms)",
+            "type": "stat",
+            "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[7d])) by (le)) * 1000",
+                "legendFormat": "p95 (ms)"
+              }
+            ],
+            "thresholds": [
+              {"value": 0, "color": "green"},
+              {"value": 500, "color": "yellow"},
+              {"value": 1000, "color": "red"}
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Error Budget Remaining (7 days)",
+            "type": "gauge",
+            "gridPos": {"x": 0, "y": 6, "w": 24, "h": 8},
+            "targets": [
+              {
+                "expr": "((1 - 0.999) - (sum(rate(http_requests_total{job=\"donelist-api-service\",status=~\"5..\"}[7d])) / sum(rate(http_requests_total{job=\"donelist-api-service\"}[7d])))) / (1 - 0.999) * 100",
+                "legendFormat": "Error Budget %"
+              }
+            ],
+            "thresholds": [
+              {"value": 0, "color": "red"},
+              {"value": 25, "color": "yellow"},
+              {"value": 50, "color": "green"}
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Latency Histogram (last 7 days)",
+            "type": "heatmap",
+            "gridPos": {"x": 0, "y": 14, "w": 24, "h": 10},
+            "targets": [
+              {
+                "expr": "sum(rate(http_request_duration_seconds_bucket{job=\"donelist-api-service\"}[7d])) by (le)",
+                "format": "heatmap"
+              }
+            ]
+          }
+        ]
+      }
+    }

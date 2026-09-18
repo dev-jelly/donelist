@@ -15,6 +15,8 @@ import (
 type Service struct {
 	repo     *Repository
 	userRepo *user.Repository
+	cache    *CacheService
+	metrics  *Metrics
 	logger   *zap.Logger
 }
 
@@ -23,17 +25,41 @@ func NewService(repo *Repository, userRepo *user.Repository, logger *zap.Logger)
 	return &Service{
 		repo:     repo,
 		userRepo: userRepo,
+		metrics:  NewMetrics(),
 		logger:   logger,
 	}
+}
+
+// SetCache sets the cache service (optional)
+func (s *Service) SetCache(cache *CacheService) {
+	s.cache = cache
 }
 
 // Search performs a search with filters and returns results
 func (s *Service) Search(ctx context.Context, userID uuid.UUID, filters SearchFilters) (*SearchResponse, error) {
 	start := time.Now()
+	cached := false
+
+	// Try cache first if available
+	if s.cache != nil {
+		cachedResponse, err := s.cache.GetSearchResults(ctx, userID, filters)
+		if err == nil && cachedResponse != nil {
+			cached = true
+			duration := time.Since(start)
+			s.metrics.RecordSearch(duration, len(cachedResponse.Results), true, nil)
+			return cachedResponse, nil
+		}
+		if err != nil {
+			s.logger.Warn("Cache error, falling back to database", zap.Error(err))
+			s.metrics.RecordCacheError()
+		}
+	}
 
 	// Perform search
 	results, total, err := s.repo.Search(ctx, userID, filters)
 	if err != nil {
+		duration := time.Since(start)
+		s.metrics.RecordSearch(duration, 0, false, err)
 		s.logger.Error("Search failed", zap.Error(err), zap.String("user_id", userID.String()))
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
@@ -41,11 +67,28 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, filters SearchFi
 	// Get facets if requested (and results exist)
 	var facets *SearchFacets
 	if total > 0 {
-		facets, err = s.repo.GetFacets(ctx, userID, filters)
-		if err != nil {
-			s.logger.Warn("Failed to get facets", zap.Error(err))
-			// Don't fail the entire search if facets fail
-			facets = nil
+		// Try cache for facets
+		if s.cache != nil {
+			cachedFacets, _ := s.cache.GetFacets(ctx, userID, filters)
+			if cachedFacets != nil {
+				facets = cachedFacets
+			}
+		}
+
+		// Fetch facets if not cached
+		if facets == nil {
+			facetStart := time.Now()
+			facets, err = s.repo.GetFacets(ctx, userID, filters)
+			if err != nil {
+				s.logger.Warn("Failed to get facets", zap.Error(err))
+				facets = nil
+			} else {
+				s.metrics.RecordFacetComputation(time.Since(facetStart))
+				// Cache facets
+				if s.cache != nil {
+					_ = s.cache.SetFacets(ctx, userID, filters, facets)
+				}
+			}
 		}
 	}
 
@@ -62,23 +105,80 @@ func (s *Service) Search(ctx context.Context, userID uuid.UUID, filters SearchFi
 		}()
 	}
 
-	took := time.Since(start).Milliseconds()
+	duration := time.Since(start)
+	took := duration.Milliseconds()
+
+	// Record metrics
+	s.metrics.RecordSearch(duration, len(results), cached, nil)
+
+	// Calculate query complexity
+	complexity := s.calculateQueryComplexity(filters)
+	hasFilters := s.hasFilters(filters)
+	s.metrics.RecordQueryComplexity(filters.Query != "", hasFilters, complexity)
 
 	s.logger.Info("Search completed",
 		zap.String("user_id", userID.String()),
 		zap.String("query", filters.Query),
 		zap.Int64("total", total),
 		zap.Int64("took_ms", took),
+		zap.Bool("cached", cached),
 	)
 
-	return &SearchResponse{
+	response := &SearchResponse{
 		Results: results,
 		Total:   total,
 		Limit:   filters.Limit,
 		Offset:  filters.Offset,
 		Facets:  facets,
 		TookMs:  took,
-	}, nil
+	}
+
+	// Cache the response
+	if s.cache != nil && !cached {
+		if err := s.cache.SetSearchResults(ctx, userID, filters, response); err != nil {
+			s.logger.Warn("Failed to cache search results", zap.Error(err))
+		}
+	}
+
+	return response, nil
+}
+
+// calculateQueryComplexity estimates query complexity for metrics
+func (s *Service) calculateQueryComplexity(filters SearchFilters) int {
+	complexity := 0
+
+	if filters.Query != "" {
+		complexity += 2
+	}
+	if filters.StartDate != nil || filters.EndDate != nil {
+		complexity += 1
+	}
+	if len(filters.CategoryIDs) > 0 {
+		complexity += 1
+	}
+	if len(filters.TagIDs) > 0 || len(filters.TagNames) > 0 {
+		complexity += 2
+	}
+	if filters.MinDuration != nil || filters.MaxDuration != nil {
+		complexity += 1
+	}
+	if filters.IsEdited != nil {
+		complexity += 1
+	}
+
+	return complexity
+}
+
+// hasFilters checks if any filters are applied
+func (s *Service) hasFilters(filters SearchFilters) bool {
+	return filters.StartDate != nil ||
+		filters.EndDate != nil ||
+		len(filters.CategoryIDs) > 0 ||
+		len(filters.TagIDs) > 0 ||
+		len(filters.TagNames) > 0 ||
+		filters.MinDuration != nil ||
+		filters.MaxDuration != nil ||
+		filters.IsEdited != nil
 }
 
 // GetSuggestions returns search suggestions
